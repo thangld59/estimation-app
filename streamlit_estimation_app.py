@@ -135,7 +135,7 @@ if estimation_file and price_list_files:
         "Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"
     ])
 
-    grand_total = result_df["Total"].sum(skipna=True)
+    grand_total = pd.to_numeric(result_df["Total"], errors="coerce").sum(skipna=True)
     grand_row = pd.DataFrame([[""] * 10 + [grand_total]], columns=result_df.columns)
     result_final = pd.concat([result_df, grand_row], ignore_index=True)
 
