@@ -5,6 +5,7 @@ import os
 from datetime import datetime
 from io import BytesIO
 from rapidfuzz import fuzz
+import re
 
 # --- SETUP ---
 st.set_page_config(page_title="BuildWise", page_icon="🏗️", layout="wide")
@@ -48,11 +49,20 @@ if file_to_delete and st.button("Delete file"):
 st.subheader("📄 Upload Estimation Request")
 estimation_file = st.file_uploader("Upload estimation request (.xlsx)", type=["xlsx"], key="est")
 
+# --- Cleaning function ---
+def clean(text):
+    text = str(text).lower()
+    text = text.replace("cáp điện", "").replace("cable", "")
+    text = text.replace("mm2", "").replace("(", "").replace(")", "")
+    text = text.replace("4c x", "4x")
+    text = text.replace("/", " ").replace(",", "")
+    return text.strip()
+
+# --- Matching logic ---
 if estimation_file and price_list_files:
     est_df = pd.read_excel(estimation_file)
     est_df = est_df.rename(columns={"Desciption": "Description"})
 
-    # Combine all selected price lists
     if selected_file == "All files":
         db_frames = []
         for f in price_list_files:
@@ -66,7 +76,6 @@ if estimation_file and price_list_files:
 
     db = db.rename(columns={"Desciption": "Description"})
 
-    # Matching logic
     result = []
     unmatched_rows = []
 
@@ -74,13 +83,13 @@ if estimation_file and price_list_files:
         match_found = False
         match_row = {}
         for col in ["Model", "Description", "Specification"]:
-            value = str(row.get(col, "")).strip().lower()
+            value = clean(row.get(col, ""))
             if not value:
                 continue
             matches = db.copy()
-            matches["score"] = db[col].astype(str).str.lower().apply(lambda x: fuzz.ratio(x, value))
+            matches["score"] = db[col].astype(str).apply(lambda x: fuzz.token_set_ratio(clean(x), value))
             best_match = matches.loc[matches["score"].idxmax()]
-            if best_match["score"] > 85:
+            if best_match["score"] > 75:
                 match_row = best_match
                 match_found = True
                 break
@@ -125,7 +134,6 @@ if estimation_file and price_list_files:
     st.download_button("📥 Download Cleaned Estimation File", data=output.getvalue(),
                        file_name="BuildWise_Estimation_Result.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-    # Show unmatched
     if unmatched_rows:
         st.subheader("❗ Unmatched Items")
         unmatched_df = pd.DataFrame(unmatched_rows)
