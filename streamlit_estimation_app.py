@@ -6,7 +6,6 @@ import re
 from io import BytesIO
 from rapidfuzz import fuzz
 
-# Clean and normalize text
 def clean(text):
     text = str(text).lower()
     text = re.sub(r"0[,.]?6kv|1[,.]?0kv", "", text)
@@ -18,7 +17,6 @@ def clean(text):
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
-# Extract size like 4x25, 2x10, etc. Normalize from formats like "4C x 25mm2"
 def extract_size(text):
     text = str(text).lower()
     text = text.replace("mm2", "").replace("mm²", "")
@@ -56,8 +54,8 @@ estimation_file = st.file_uploader("Upload estimation request (.xlsx)", type=["x
 if estimation_file and price_list_files:
     est = pd.read_excel(estimation_file).dropna(how='all')
     est_cols = est.columns.tolist()
-    if len(est_cols) < 3:
-        st.error("Estimation file must have at least 3 columns.")
+    if len(est_cols) < 5:
+        st.error("Estimation file must have at least 5 columns.")
         st.stop()
 
     est["combined"] = (
@@ -83,8 +81,8 @@ if estimation_file and price_list_files:
         db = pd.read_excel(os.path.join(user_folder, selected_file)).dropna(how='all')
 
     db_cols = db.columns.tolist()
-    if len(db_cols) < 3:
-        st.error("Database file must have at least 3 columns.")
+    if len(db_cols) < 7:
+        st.error("Price list file must have at least 7 columns.")
         st.stop()
 
     db["combined"] = (
@@ -99,42 +97,55 @@ if estimation_file and price_list_files:
         db.get(db_cols[2], "").fillna('')
     ).apply(extract_size)
 
-    matches = []
-    for _, est_row in est.iterrows():
-        query = est_row["combined"]
-        query_size = est_row["size"]
-
+    output_data = []
+    for i, row in est.iterrows():
+        query = row["combined"]
+        query_size = row["size"]
+        qty = row[est_cols[3]]
+        unit = row[est_cols[4]]
         if not query_size:
+            output_data.append([row[est_cols[0]], row[est_cols[1]], "", row[est_cols[2]], qty, unit, "", "", "", "", ""])
             continue
 
         db_filtered = db[db["size"] == query_size]
-
         if db_filtered.empty:
-            matches.append({
-                "Estimation": query,
-                "Size": query_size,
-                "Match Status": "❌ No size match",
-                "Matched DB": "",
-                "Score": 0,
-                "Original Match": ""
-            })
+            output_data.append([row[est_cols[0]], row[est_cols[1]], "", row[est_cols[2]], qty, unit, "", "", "", "", ""])
         else:
             db_filtered = db_filtered.copy()
             db_filtered["score"] = db_filtered["combined"].apply(lambda x: fuzz.token_set_ratio(query, x))
             best = db_filtered.loc[db_filtered["score"].idxmax()]
-            matches.append({
-                "Estimation": query,
-                "Size": query_size,
-                "Match Status": "✅ Size matched",
-                "Matched DB": best["combined"],
-                "Score": best["score"],
-                "Original Match": best.get(db_cols[0], "")
-            })
+            m_cost = best[db_cols[5]]
+            l_cost = best[db_cols[6]]
+            amt_mat = qty * m_cost
+            amt_lab = qty * l_cost
+            total = amt_mat + amt_lab
+            output_data.append([
+                row[est_cols[0]], row[est_cols[1]], best[db_cols[1]], row[est_cols[2]],
+                qty, unit, m_cost, l_cost, amt_mat, amt_lab, total
+            ])
 
-    result_df = pd.DataFrame(matches)
-    st.subheader("🔍 Matching Result")
-    st.dataframe(result_df)
+    result_df = pd.DataFrame(output_data, columns=[
+        "Model", "Description (requested)", "Description (proposed)", "Specification", "Quantity", "Unit",
+        "Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"
+    ])
+
+    grand_total = result_df["Total"].sum(skipna=True)
+    grand_row = pd.DataFrame([[""] * 10 + [grand_total]], columns=result_df.columns)
+    result_final = pd.concat([result_df, grand_row], ignore_index=True)
+
+    unmatched = result_df[result_df["Description (proposed)"] == ""]
+
+    st.subheader("🔍 Matched Estimation")
+    st.dataframe(result_final)
+
+    st.subheader("❌ Unmatched Rows")
+    if not unmatched.empty:
+        st.dataframe(unmatched)
+    else:
+        st.info("✅ All rows matched successfully!")
 
     buffer = BytesIO()
-    result_df.to_excel(buffer, index=False)
-    st.download_button("📥 Download Matching Result", data=buffer.getvalue(), file_name="Matching_Result_SizeAware.xlsx")
+    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+        result_final.to_excel(writer, index=False, sheet_name="Matched Results")
+        unmatched.to_excel(writer, index=False, sheet_name="Unmatched Items")
+    st.download_button("📥 Download Cleaned Estimation File", buffer.getvalue(), file_name="Estimation_Result_BuildWise.xlsx")
