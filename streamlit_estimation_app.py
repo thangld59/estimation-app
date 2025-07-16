@@ -144,6 +144,9 @@ if estimation_file and price_list_files:
     st.subheader("🔍 Matched Estimation")
     # Format numeric columns
     display_df = result_final.copy()
+    if "Quantity" in display_df.columns:
+        display_df["Quantity"] = pd.to_numeric(display_df["Quantity"], errors="coerce").fillna(0).map(lambda x: f"{int(x):,}")
+    
     for col in ["Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"]:
         if col in display_df.columns:
             display_df[col] = pd.to_numeric(display_df[col], errors="coerce").fillna(0).map(lambda x: f"{int(x):,}")
