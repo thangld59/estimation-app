@@ -160,7 +160,19 @@ if estimation_file and price_list_files:
         st.info("✅ All rows matched successfully!")
 
     buffer = BytesIO()
-    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+    
+with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+    # Reformat numeric columns before export
+    export_df = result_final.copy()
+    for col in ["Quantity", "Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"]:
+        if col in export_df.columns:
+            export_df[col] = pd.to_numeric(export_df[col], errors="coerce").fillna(0).astype(int)
+
+    export_df.to_excel(writer, index=False, sheet_name="Matched Results")
+
+    if not unmatched_df.empty:
+        unmatched_df.to_excel(writer, index=False, sheet_name="Unmatched Items")
+    
         result_final.to_excel(writer, index=False, sheet_name="Matched Results")
         unmatched.to_excel(writer, index=False, sheet_name="Unmatched Items")
     st.download_button("📥 Download Cleaned Estimation File", buffer.getvalue(), file_name="Estimation_Result_BuildWise.xlsx")
