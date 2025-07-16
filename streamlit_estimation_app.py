@@ -161,7 +161,11 @@ if estimation_file and price_list_files:
 
     buffer = BytesIO()
     
-with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+
+    import io
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+    
     # Reformat numeric columns before export
     
     # Ensure required columns exist before export
