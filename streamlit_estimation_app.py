@@ -165,6 +165,22 @@ if estimation_file and price_list_files:
     import io
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+        # Reformat numeric columns before export
+        export_df = result_final.copy()
+        required_cols = ["Description (proposed)", "Labour Cost"]
+        for col in required_cols:
+            if col not in export_df.columns:
+                export_df[col] = ""
+
+        for col in ["Quantity", "Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"]:
+            if col in export_df.columns:
+                export_df[col] = pd.to_numeric(export_df[col], errors="coerce").fillna(0).astype(int)
+
+        export_df.to_excel(writer, index=False, sheet_name="Matched Results")
+
+        if not unmatched_df.empty:
+            unmatched_df.to_excel(writer, index=False, sheet_name="Unmatched Items")
+    
     
     # Reformat numeric columns before export
     
