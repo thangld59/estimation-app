@@ -163,7 +163,19 @@ if estimation_file and price_list_files:
     
 with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
     # Reformat numeric columns before export
+    
+    # Ensure required columns exist before export
     export_df = result_final.copy()
+    required_cols = ["Description (proposed)", "Labour Cost"]
+    for col in required_cols:
+        if col not in export_df.columns:
+            export_df[col] = ""
+
+    # Format numeric columns properly
+    for col in ["Quantity", "Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"]:
+        if col in export_df.columns:
+            export_df[col] = pd.to_numeric(export_df[col], errors="coerce").fillna(0).astype(int)
+    
     for col in ["Quantity", "Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"]:
         if col in export_df.columns:
             export_df[col] = pd.to_numeric(export_df[col], errors="coerce").fillna(0).astype(int)
