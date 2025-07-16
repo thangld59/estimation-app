@@ -114,10 +114,16 @@ if estimation_file and price_list_files:
             db_filtered = db_filtered.copy()
             db_filtered["score"] = db_filtered["combined"].apply(lambda x: fuzz.token_set_ratio(query, x))
             best = db_filtered.loc[db_filtered["score"].idxmax()]
-            m_cost = best[db_cols[5]]
-            l_cost = best[db_cols[6]]
-            amt_mat = qty * m_cost
-            amt_lab = qty * l_cost
+            m_cost = pd.to_numeric(best[db_cols[5]], errors="coerce")
+            l_cost = pd.to_numeric(best[db_cols[6]], errors="coerce")
+            qty_val = pd.to_numeric(qty, errors="coerce")
+
+            if pd.isna(m_cost): m_cost = 0
+            if pd.isna(l_cost): l_cost = 0
+            if pd.isna(qty_val): qty_val = 0
+
+            amt_mat = qty_val * m_cost
+            amt_lab = qty_val * l_cost
             total = amt_mat + amt_lab
             output_data.append([
                 row[est_cols[0]], row[est_cols[1]], best[db_cols[1]], row[est_cols[2]],
