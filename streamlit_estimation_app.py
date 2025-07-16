@@ -6,7 +6,7 @@ import re
 from io import BytesIO
 from rapidfuzz import fuzz
 
-# Clean function for fuzzy matching
+# Clean and normalize text
 def clean(text):
     text = str(text).lower()
     text = re.sub(r"0[,.]?6kv|1[,.]?0kv", "", text)
@@ -17,6 +17,14 @@ def clean(text):
     text = text.replace("cáp", "").replace("cable", "").replace("dây", "")
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+# Extract size like 4x25, 2x10, etc. Normalize from formats like "4C x 25mm2"
+def extract_size(text):
+    text = str(text).lower()
+    text = text.replace("mm2", "").replace("mm²", "")
+    text = re.sub(r"(\d)c", r"\1", text)  # convert 4C -> 4
+    match = re.search(r'\b\d{1,2}\s*[x×]\s*\d{1,3}\b', text)
+    return match.group(0).replace(" ", "") if match else ""
 
 st.set_page_config(page_title="BuildWise", page_icon="📐", layout="wide")
 st.image("assets/logo.png", width=120)
@@ -51,11 +59,18 @@ if estimation_file and price_list_files:
     if len(est_cols) < 3:
         st.error("Estimation file must have at least 3 columns.")
         st.stop()
+
     est["combined"] = (
         est.get(est_cols[0], "").fillna('') + " " +
         est.get(est_cols[1], "").fillna('') + " " +
         est.get(est_cols[2], "").fillna('')
     ).apply(clean)
+
+    est["size"] = (
+        est.get(est_cols[0], "").fillna('') + " " +
+        est.get(est_cols[1], "").fillna('') + " " +
+        est.get(est_cols[2], "").fillna('')
+    ).apply(extract_size)
 
     db_frames = []
     if selected_file == "All files":
@@ -78,23 +93,48 @@ if estimation_file and price_list_files:
         db.get(db_cols[2], "").fillna('')
     ).apply(clean)
 
-    results = []
+    db["size"] = (
+        db.get(db_cols[0], "").fillna('') + " " +
+        db.get(db_cols[1], "").fillna('') + " " +
+        db.get(db_cols[2], "").fillna('')
+    ).apply(extract_size)
+
+    matches = []
     for _, est_row in est.iterrows():
         query = est_row["combined"]
-        db["score"] = db["combined"].apply(lambda x: fuzz.token_set_ratio(query, x))
-        best = db.loc[db["score"].idxmax()]
-        results.append({
-            "Estimation Input": query,
-            "Matched Item": best["combined"],
-            "Score": best["score"],
-            "Original Match": best.get(db_cols[0], ""),
-            "Source File": best.get("source", "N/A")
-        })
+        query_size = est_row["size"]
 
-    result_df = pd.DataFrame(results)
+        if not query_size:
+            continue
+
+        db_filtered = db[db["size"] == query_size]
+
+        if db_filtered.empty:
+            matches.append({
+                "Estimation": query,
+                "Size": query_size,
+                "Match Status": "❌ No size match",
+                "Matched DB": "",
+                "Score": 0,
+                "Original Match": ""
+            })
+        else:
+            db_filtered = db_filtered.copy()
+            db_filtered["score"] = db_filtered["combined"].apply(lambda x: fuzz.token_set_ratio(query, x))
+            best = db_filtered.loc[db_filtered["score"].idxmax()]
+            matches.append({
+                "Estimation": query,
+                "Size": query_size,
+                "Match Status": "✅ Size matched",
+                "Matched DB": best["combined"],
+                "Score": best["score"],
+                "Original Match": best.get(db_cols[0], "")
+            })
+
+    result_df = pd.DataFrame(matches)
     st.subheader("🔍 Matching Result")
     st.dataframe(result_df)
 
     buffer = BytesIO()
     result_df.to_excel(buffer, index=False)
-    st.download_button("📥 Download Matching Result", data=buffer.getvalue(), file_name="Matching_Result.xlsx")
+    st.download_button("📥 Download Matching Result", data=buffer.getvalue(), file_name="Matching_Result_SizeAware.xlsx")
