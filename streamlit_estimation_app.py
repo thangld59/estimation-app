@@ -5,6 +5,9 @@ import re
 from io import BytesIO
 from rapidfuzz import fuzz
 
+# ------------------------------
+# Utility Functions
+# ------------------------------
 def clean(text):
     text = str(text).lower()
     text = re.sub(r"0[,.]?6kv|1[,.]?0kv", "", text)
@@ -23,9 +26,12 @@ def extract_size(text):
     match = re.search(r'\b\d{1,2}\s*[x×]\s*\d{1,3}\b', text)
     return match.group(0).replace(" ", "") if match else ""
 
-st.set_page_config(page_title="BuildWise", page_icon="📐", layout="wide")
+# ------------------------------
+# App Configuration
+# ------------------------------
+st.set_page_config(page_title="BuildWise", page_icon="📀", layout="wide")
 st.image("assets/logo.png", width=120)
-st.title("📐 BuildWise - Smart Estimation Tool")
+st.title(":triangular_ruler: BuildWise - Smart Estimation Tool")
 
 username = st.sidebar.text_input("Username")
 if not username:
@@ -35,19 +41,28 @@ if not username:
 user_folder = f"user_data/{username}"
 os.makedirs(user_folder, exist_ok=True)
 
-st.subheader("📁 Upload Price List Files")
+# ------------------------------
+# Upload Price List Files
+# ------------------------------
+st.subheader(":file_folder: Upload Price List Files")
 uploaded_files = st.file_uploader("Upload one or more Excel files", type=["xlsx"], accept_multiple_files=True)
 if uploaded_files:
     for file in uploaded_files:
         with open(os.path.join(user_folder, file.name), "wb") as f:
             f.write(file.read())
-    st.success("✅ Price list uploaded successfully.")
+    st.success(":white_check_mark: Price list uploaded successfully.")
 
-st.subheader("📂 Manage Price Lists")
+# ------------------------------
+# Manage Price Lists
+# ------------------------------
+st.subheader(":open_file_folder: Manage Price Lists")
 price_list_files = os.listdir(user_folder)
 selected_file = st.radio("Choose one file to match or use all", ["All files"] + price_list_files)
 
-st.subheader("📄 Upload Estimation File")
+# ------------------------------
+# Upload Estimation File
+# ------------------------------
+st.subheader(":page_facing_up: Upload Estimation File")
 estimation_file = st.file_uploader("Upload estimation request (.xlsx)", type=["xlsx"], key="est")
 if estimation_file and price_list_files:
     est = pd.read_excel(estimation_file).dropna(how='all')
@@ -56,16 +71,8 @@ if estimation_file and price_list_files:
         st.error("Estimation file must have at least 5 columns.")
         st.stop()
 
-    est["combined"] = (
-        est.get(est_cols[0], "").fillna('') + " " +
-        est.get(est_cols[1], "").fillna('') + " " +
-        est.get(est_cols[2], "").fillna('')
-    ).apply(clean)
-    est["size"] = (
-        est.get(est_cols[0], "").fillna('') + " " +
-        est.get(est_cols[1], "").fillna('') + " " +
-        est.get(est_cols[2], "").fillna('')
-    ).apply(extract_size)
+    est["combined"] = (est[est_cols[0]].fillna('') + " " + est[est_cols[1]].fillna('') + " " + est[est_cols[2]].fillna('')).apply(clean)
+    est["size"] = (est[est_cols[0]].fillna('') + " " + est[est_cols[1]].fillna('') + " " + est[est_cols[2]].fillna('')).apply(extract_size)
 
     db_frames = []
     if selected_file == "All files":
@@ -82,16 +89,8 @@ if estimation_file and price_list_files:
         st.error("Price list file must have at least 7 columns.")
         st.stop()
 
-    db["combined"] = (
-        db.get(db_cols[0], "").fillna('') + " " +
-        db.get(db_cols[1], "").fillna('') + " " +
-        db.get(db_cols[2], "").fillna('')
-    ).apply(clean)
-    db["size"] = (
-        db.get(db_cols[0], "").fillna('') + " " +
-        db.get(db_cols[1], "").fillna('') + " " +
-        db.get(db_cols[2], "").fillna('')
-    ).apply(extract_size)
+    db["combined"] = (db[db_cols[0]].fillna('') + " " + db[db_cols[1]].fillna('') + " " + db[db_cols[2]].fillna('')).apply(clean)
+    db["size"] = (db[db_cols[0]].fillna('') + " " + db[db_cols[1]].fillna('') + " " + db[db_cols[2]].fillna('')).apply(extract_size)
 
     output_data = []
     for i, row in est.iterrows():
@@ -100,25 +99,24 @@ if estimation_file and price_list_files:
         qty = row[est_cols[3]]
         unit = row[est_cols[4]]
 
-        best_description = ""
-        m_cost = 0
-        l_cost = 0
-
+        best = None
         if query_size:
             db_filtered = db[db["size"] == query_size]
             if not db_filtered.empty:
                 db_filtered = db_filtered.copy()
                 db_filtered["score"] = db_filtered["combined"].apply(lambda x: fuzz.token_set_ratio(query, x))
                 best = db_filtered.loc[db_filtered["score"].idxmax()]
-                best_description = best[db_cols[1]]
-                m_cost = pd.to_numeric(best[db_cols[5]], errors="coerce")
-                l_cost = pd.to_numeric(best[db_cols[6]], errors="coerce")
+
+        if best is not None:
+            m_cost = pd.to_numeric(best[db_cols[5]], errors="coerce")
+            l_cost = pd.to_numeric(best[db_cols[6]], errors="coerce")
+            desc_proposed = best[db_cols[1]]
+        else:
+            m_cost = l_cost = 0
+            desc_proposed = ""
 
         qty_val = pd.to_numeric(qty, errors="coerce")
         if pd.isna(qty_val): qty_val = 0
-        if pd.isna(m_cost): m_cost = 0
-        if pd.isna(l_cost): l_cost = 0
-
         amt_mat = qty_val * m_cost
         amt_lab = qty_val * l_cost
         total = amt_mat + amt_lab
@@ -126,7 +124,7 @@ if estimation_file and price_list_files:
         output_data.append([
             row[est_cols[0]],  # Model
             row[est_cols[1]],  # Description (requested)
-            best_description,  # Description (proposed)
+            desc_proposed,     # Description (proposed)
             row[est_cols[2]],  # Specification
             qty,               # Quantity
             unit,              # Unit
@@ -142,26 +140,28 @@ if estimation_file and price_list_files:
         "Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"
     ])
 
-    grand_total = pd.to_numeric(result_df["Total"], errors="coerce").sum(skipna=True)
-    result_df.loc[len(result_df)] = [""] * 10 + [grand_total]
+    grand_total = pd.to_numeric(result_df["Total"], errors="coerce").sum()
+    grand_row = pd.DataFrame([[""] * 10 + [grand_total]], columns=result_df.columns)
+    result_final = pd.concat([result_df, grand_row], ignore_index=True)
 
-    st.subheader("🔍 Matched Estimation")
-    display_df = result_df.copy()
-    for col in ["Quantity", "Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"]:
-        if col in display_df.columns:
-            display_df[col] = pd.to_numeric(display_df[col], errors="coerce").fillna(0).astype(int).map(lambda x: f"{x:,}")
+    st.subheader(":mag: Matched Estimation")
+    display_df = result_final.copy()
+    display_df["Quantity"] = pd.to_numeric(display_df["Quantity"], errors="coerce").fillna(0).astype(int).map("{:,}".format)
+    for col in ["Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"]:
+        display_df[col] = pd.to_numeric(display_df[col], errors="coerce").fillna(0).astype(int).map("{:,}".format)
     st.dataframe(display_df)
 
-    st.subheader("❌ Unmatched Rows")
+    st.subheader(":x: Unmatched Rows")
     unmatched_df = result_df[result_df["Description (proposed)"] == ""]
     if not unmatched_df.empty:
         st.dataframe(unmatched_df)
     else:
-        st.info("✅ All rows matched successfully!")
+        st.info(":white_check_mark: All rows matched successfully!")
 
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-        result_df.to_excel(writer, index=False, sheet_name="Matched Results")
+        result_final.to_excel(writer, index=False, sheet_name="Matched Results")
         if not unmatched_df.empty:
             unmatched_df.to_excel(writer, index=False, sheet_name="Unmatched Items")
-    st.download_button("📥 Download Cleaned Estimation File", buffer.getvalue(), file_name="Estimation_Result_BuildWise.xlsx")
+
+    st.download_button("\U0001F4E5 Download Cleaned Estimation File", buffer.getvalue(), file_name="Estimation_Result_BuildWise.xlsx")
