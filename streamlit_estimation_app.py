@@ -85,8 +85,8 @@ if estimation_file and price_list_files:
         db = pd.read_excel(os.path.join(user_folder, selected_file)).dropna(how='all')
 
     db_cols = db.columns.tolist()
-    if len(db_cols) < 7:
-        st.error("Price list file must have at least 7 columns.")
+    if len(db_cols) < 6:
+        st.error("Price list file must have at least 6 columns.")
         st.stop()
 
     db["combined"] = (db[db_cols[0]].fillna('') + " " + db[db_cols[1]].fillna('') + " " + db[db_cols[2]].fillna('')).apply(clean)
@@ -96,8 +96,8 @@ if estimation_file and price_list_files:
     for i, row in est.iterrows():
         query = row["combined"]
         query_size = row["size"]
-        qty = row[est_cols[3]]
-        unit = row[est_cols[4]]
+        unit = row[est_cols[3]]
+        qty = row[est_cols[4]]
 
         best = None
         if query_size:
@@ -108,12 +108,12 @@ if estimation_file and price_list_files:
                 best = db_filtered.loc[db_filtered["score"].idxmax()]
 
         if best is not None:
-            m_cost = pd.to_numeric(best[db_cols[5]], errors="coerce")
-            l_cost = pd.to_numeric(best[db_cols[6]], errors="coerce")
             desc_proposed = best[db_cols[1]]
+            m_cost = pd.to_numeric(best[db_cols[4]], errors="coerce")
+            l_cost = pd.to_numeric(best[db_cols[5]], errors="coerce")
         else:
-            m_cost = l_cost = 0
             desc_proposed = ""
+            m_cost = l_cost = 0
 
         qty_val = pd.to_numeric(qty, errors="coerce")
         if pd.isna(qty_val): qty_val = 0
@@ -126,8 +126,8 @@ if estimation_file and price_list_files:
             row[est_cols[1]],  # Description (requested)
             desc_proposed,     # Description (proposed)
             row[est_cols[2]],  # Specification
-            qty,               # Quantity
             unit,              # Unit
+            qty,               # Quantity
             m_cost,            # Material Cost
             l_cost,            # Labour Cost
             amt_mat,           # Amount Material
@@ -136,12 +136,12 @@ if estimation_file and price_list_files:
         ])
 
     result_df = pd.DataFrame(output_data, columns=[
-        "Model", "Description (requested)", "Description (proposed)", "Specification", "Quantity", "Unit",
+        "Model", "Description (requested)", "Description (proposed)", "Specification", "Unit", "Quantity",
         "Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"
     ])
 
     grand_total = pd.to_numeric(result_df["Total"], errors="coerce").sum()
-    grand_row = pd.DataFrame([[""] * 10 + [grand_total]], columns=result_df.columns)
+    grand_row = pd.DataFrame([[''] * 10 + [grand_total]], columns=result_df.columns)
     result_final = pd.concat([result_df, grand_row], ignore_index=True)
 
     st.subheader(":mag: Matched Estimation")
