@@ -114,7 +114,7 @@ if estimation_file and price_list_files:
 
     output_data = []
     for i, row in est.iterrows():
-        query_text = row[est_cols[0]].fillna('') + " " + row[est_cols[1]].fillna('') + " " + row[est_cols[2]].fillna('')
+        query_text = str(row.get(est_cols[0], "") or "") + " " + str(row.get(est_cols[1], "") or "") + " " + str(row.get(est_cols[2], "") or "")
         query_comp = parse_cable_components(query_text)
 
         best_score = 0
