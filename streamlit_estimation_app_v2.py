@@ -16,15 +16,16 @@ def clean(text):
     text = text.replace("/", " ").replace(",", "")
     text = text.replace("-", " ")
     text = text.replace("cáp", "").replace("cable", "").replace("dây", "")
+    text = text.replace("ống", " conduit ")  # Normalize Vietnamese "ống"
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
 def extract_size(text):
     text = str(text).lower()
     text = text.replace("mm2", "").replace("mm²", "")
-    text = re.sub(r"(\d)c", r"\1", text)  # convert 4C -> 4
-    match = re.search(r'\b\d{1,2}\s*[x×]\s*\d{1,3}\b', text)
-    return match.group(0).replace(" ", "") if match else ""
+    text = text.replace("ø", "d").replace("phi", "d").replace("\u00d8", "d")
+    match = re.search(r"d?\s*(\d{1,3})\b", text)
+    return match.group(1) if match else ""
 
 # ------------------------------
 # App Configuration
@@ -57,13 +58,6 @@ if uploaded_files:
 # ------------------------------
 st.subheader(":open_file_folder: Manage Price Lists")
 price_list_files = os.listdir(user_folder)
-if price_list_files:
-    delete_file = st.selectbox("Delete a file:", price_list_files)
-    if st.button("Delete Selected File"):
-        os.remove(os.path.join(user_folder, delete_file))
-        st.success(f"Deleted {delete_file}")
-        st.experimental_rerun()
-
 selected_file = st.radio("Choose one file to match or use all", ["All files"] + price_list_files)
 
 # ------------------------------
@@ -107,12 +101,17 @@ if estimation_file and price_list_files:
         unit = row[est_cols[3]]
 
         best = None
-        if query_size:
+        category_keywords = ["conduit", "ống", "pipe"]
+        is_conduit = any(word in query for word in category_keywords)
+
+        if is_conduit and query_size:
             db_filtered = db[db["size"] == query_size]
             if not db_filtered.empty:
                 db_filtered = db_filtered.copy()
                 db_filtered["score"] = db_filtered["combined"].apply(lambda x: fuzz.token_set_ratio(query, x))
-                best = db_filtered.loc[db_filtered["score"].idxmax()]
+                db_filtered = db_filtered[db_filtered["score"] >= 70]  # Minimum threshold
+                if not db_filtered.empty:
+                    best = db_filtered.loc[db_filtered["score"].idxmax()]
 
         if best is not None:
             m_cost = pd.to_numeric(best[db_cols[4]], errors="coerce")
@@ -147,31 +146,28 @@ if estimation_file and price_list_files:
         "Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"
     ])
 
-    if not result_df.empty:
-        grand_total = pd.to_numeric(result_df["Total"], errors="coerce").sum()
-        grand_row = pd.DataFrame([[""] * 10 + [grand_total]], columns=result_df.columns)
-        result_final = pd.concat([result_df, grand_row], ignore_index=True)
+    grand_total = pd.to_numeric(result_df["Total"], errors="coerce").sum()
+    grand_row = pd.DataFrame([[""] * 10 + [grand_total]], columns=result_df.columns)
+    result_final = pd.concat([result_df, grand_row], ignore_index=True)
 
-        st.subheader(":mag: Matched Estimation")
-        display_df = result_final.copy()
-        display_df["Quantity"] = pd.to_numeric(display_df["Quantity"], errors="coerce").fillna(0).astype(int).map("{:,}".format)
-        for col in ["Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"]:
-            display_df[col] = pd.to_numeric(display_df[col], errors="coerce").fillna(0).astype(int).map("{:,}".format)
-        st.dataframe(display_df)
+    st.subheader(":mag: Matched Estimation")
+    display_df = result_final.copy()
+    display_df["Quantity"] = pd.to_numeric(display_df["Quantity"], errors="coerce").fillna(0).astype(int).map("{:,}".format)
+    for col in ["Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"]:
+        display_df[col] = pd.to_numeric(display_df[col], errors="coerce").fillna(0).astype(int).map("{:,}".format)
+    st.dataframe(display_df)
 
-        st.subheader(":x: Unmatched Rows")
-        unmatched_df = result_df[result_df["Description (proposed)"] == ""]
-        if not unmatched_df.empty:
-            st.dataframe(unmatched_df)
-        else:
-            st.info(":white_check_mark: All rows matched successfully!")
-
-        buffer = BytesIO()
-        with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-            result_final.to_excel(writer, index=False, sheet_name="Matched Results")
-            if not unmatched_df.empty:
-                unmatched_df.to_excel(writer, index=False, sheet_name="Unmatched Items")
-
-        st.download_button("\U0001F4E5 Download Cleaned Estimation File", buffer.getvalue(), file_name="Estimation_Result_BuildWise.xlsx")
+    st.subheader(":x: Unmatched Rows")
+    unmatched_df = result_df[result_df["Description (proposed)"] == ""]
+    if not unmatched_df.empty:
+        st.dataframe(unmatched_df)
     else:
-        st.warning("No matches found. Please check your inputs.")
+        st.info(":white_check_mark: All rows matched successfully!")
+
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+        result_final.to_excel(writer, index=False, sheet_name="Matched Results")
+        if not unmatched_df.empty:
+            unmatched_df.to_excel(writer, index=False, sheet_name="Unmatched Items")
+
+    st.download_button("\U0001F4E5 Download Cleaned Estimation File", buffer.getvalue(), file_name="Estimation_Result_BuildWise.xlsx")
