@@ -16,26 +16,42 @@ def clean(text):
     text = text.replace("/", " ").replace(",", "")
     text = text.replace("-", " ")
     text = text.replace("cáp", "").replace("cable", "").replace("dây", "")
-    text = text.replace("ống", "conduit").replace("máng", "tray").replace("thang", "rack")
     text = re.sub(r"\s+", " ", text).strip()
     return text
-
-def extract_dimensions(text):
-    text = str(text).lower().replace(" ", "")
-    text = re.sub(r"[\(\)]", "", text)
-    match = re.search(r"w[=]?(\d{2,4})[x×h=]*(\d{2,4})[x×t=]*(\d{1,3})", text)
-    if not match:
-        match = re.search(r"(\d{2,4})[x×](\d{2,4})[x×](\d{1,3})", text)
-    if not match:
-        match = re.search(r"(\d{2,4})w(\d{2,4})h(\d{1,3})", text)
-    return "{}x{}x{}".format(*match.groups()) if match else ""
 
 def extract_size(text):
     text = str(text).lower()
     text = text.replace("mm2", "").replace("mm²", "")
     text = re.sub(r"(\d)c", r"\1", text)
-    match = re.search(r"\b\d{1,2}\s*[x×]\s*\d{1,3}\b", text)
+    match = re.search(r'\b\d{1,2}\s*[x×]\s*\d{1,3}(\.\d+)?\b', text)
     return match.group(0).replace(" ", "") if match else ""
+
+def extract_voltage(text):
+    text = str(text).lower()
+    match = re.search(r"\b0[.,]?6[ /-]?1[.,]?0?k?[vV]?\b", text)
+    return "0.6/1kV" if match else ""
+
+def extract_material(text):
+    text = str(text).lower()
+    if "nhôm" in text or "aluminium" in text or "al" in text:
+        return "al"
+    elif "cu" in text:
+        return "cu"
+    return ""
+
+def extract_insulation(text):
+    text = str(text).lower()
+    if "xlpe" in text: return "xlpe"
+    if "pvc" in text: return "pvc"
+    if "lszh" in text: return "lszh"
+    if "pe" in text: return "pe"
+    return ""
+
+def extract_shielding(text):
+    text = str(text).lower()
+    if any(x in text for x in ["swa", "sta", "armored", "a", "tape", "screen", "shield"]):
+        return "shielded"
+    return "unshielded"
 
 # ------------------------------
 # App Configuration
@@ -83,7 +99,10 @@ if estimation_file and price_list_files:
         st.stop()
 
     est["combined"] = (est[est_cols[0]].fillna('') + " " + est[est_cols[1]].fillna('') + " " + est[est_cols[2]].fillna('')).apply(clean)
-    est["dimensions"] = (est[est_cols[0]].fillna('') + " " + est[est_cols[1]].fillna('') + " " + est[est_cols[2]].fillna('')).apply(extract_dimensions)
+    est["size"] = (est[est_cols[0]] + " " + est[est_cols[1]] + " " + est[est_cols[2]]).apply(extract_size)
+    est["voltage"] = (est[est_cols[0]] + " " + est[est_cols[1]] + " " + est[est_cols[2]]).apply(extract_voltage)
+    est["material"] = (est[est_cols[0]] + " " + est[est_cols[1]] + " " + est[est_cols[2]]).apply(extract_material)
+    est["insulation"] = (est[est_cols[0]] + " " + est[est_cols[1]] + " " + est[est_cols[2]]).apply(extract_insulation)
 
     db_frames = []
     if selected_file == "All files":
@@ -96,37 +115,47 @@ if estimation_file and price_list_files:
         db = pd.read_excel(os.path.join(user_folder, selected_file)).dropna(how='all')
 
     db_cols = db.columns.tolist()
-    if len(db_cols) < 7:
-        st.error("Price list file must have at least 7 columns.")
+    if len(db_cols) < 6:
+        st.error("Price list file must have at least 6 columns.")
         st.stop()
 
     db["combined"] = (db[db_cols[0]].fillna('') + " " + db[db_cols[1]].fillna('') + " " + db[db_cols[2]].fillna('')).apply(clean)
-    db["dimensions"] = (db[db_cols[0]].fillna('') + " " + db[db_cols[1]].fillna('') + " " + db[db_cols[2]].fillna('')).apply(extract_dimensions)
+    db["size"] = (db[db_cols[0]] + " " + db[db_cols[1]] + " " + db[db_cols[2]]).apply(extract_size)
+    db["voltage"] = (db[db_cols[0]] + " " + db[db_cols[1]] + " " + db[db_cols[2]]).apply(extract_voltage)
+    db["material"] = (db[db_cols[0]] + " " + db[db_cols[1]] + " " + db[db_cols[2]]).apply(extract_material)
+    db["insulation"] = (db[db_cols[0]] + " " + db[db_cols[1]] + " " + db[db_cols[2]]).apply(extract_insulation)
 
     output_data = []
     for i, row in est.iterrows():
         query = row["combined"]
-        dim = row["dimensions"]
-        qty = row[est_cols[4]]
+        query_size = row["size"]
+        query_voltage = row["voltage"]
+        query_material = row["material"]
+        query_insul = row["insulation"]
         unit = row[est_cols[3]]
+        qty = row[est_cols[4]]
 
         best = None
-        if dim:
-            db_filtered = db[db["dimensions"] == dim]
+        if query_size and query_voltage:
+            db_filtered = db[(db["size"] == query_size) & (db["voltage"] == query_voltage)]
             if not db_filtered.empty:
                 db_filtered = db_filtered.copy()
                 db_filtered["score"] = db_filtered["combined"].apply(lambda x: fuzz.token_set_ratio(query, x))
-                top_match = db_filtered.loc[db_filtered["score"].idxmax()]
-                if top_match["score"] >= 85:
-                    best = top_match
+                db_filtered["boost"] = 0
+                db_filtered.loc[db_filtered["material"] == query_material, "boost"] += 10
+                db_filtered.loc[db_filtered["insulation"] == query_insul, "boost"] += 5
+                db_filtered["total_score"] = db_filtered["score"] + db_filtered["boost"]
+                top = db_filtered.sort_values(by="total_score", ascending=False).iloc[0]
+                if top["total_score"] >= 70:
+                    best = top
 
         if best is not None:
+            desc_proposed = best[db_cols[1]]
             m_cost = pd.to_numeric(best[db_cols[4]], errors="coerce")
             l_cost = pd.to_numeric(best[db_cols[5]], errors="coerce")
-            desc_proposed = best[db_cols[1]]
         else:
-            m_cost = l_cost = 0
             desc_proposed = ""
+            m_cost = l_cost = 0
 
         qty_val = pd.to_numeric(qty, errors="coerce")
         if pd.isna(qty_val): qty_val = 0
@@ -135,17 +164,8 @@ if estimation_file and price_list_files:
         total = amt_mat + amt_lab
 
         output_data.append([
-            row[est_cols[0]],  # Model
-            row[est_cols[1]],  # Description (requested)
-            desc_proposed,     # Description (proposed)
-            row[est_cols[2]],  # Specification
-            unit,              # Unit
-            qty,               # Quantity
-            m_cost,            # Material Cost
-            l_cost,            # Labour Cost
-            amt_mat,           # Amount Material
-            amt_lab,           # Amount Labour
-            total              # Total
+            row[est_cols[0]], row[est_cols[1]], desc_proposed, row[est_cols[2]],
+            unit, qty, m_cost, l_cost, amt_mat, amt_lab, total
         ])
 
     result_df = pd.DataFrame(output_data, columns=[
@@ -154,15 +174,10 @@ if estimation_file and price_list_files:
     ])
 
     grand_total = pd.to_numeric(result_df["Total"], errors="coerce").sum()
-    grand_row = pd.DataFrame([[""] * 10 + [grand_total]], columns=result_df.columns)
-    result_final = pd.concat([result_df, grand_row], ignore_index=True)
+    result_final = pd.concat([result_df, pd.DataFrame([[''] * 10 + [grand_total]], columns=result_df.columns)], ignore_index=True)
 
     st.subheader(":mag: Matched Estimation")
-    display_df = result_final.copy()
-    display_df["Quantity"] = pd.to_numeric(display_df["Quantity"], errors="coerce").fillna(0).astype(int).map("{:,}".format)
-    for col in ["Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"]:
-        display_df[col] = pd.to_numeric(display_df[col], errors="coerce").fillna(0).astype(int).map("{:,}".format)
-    st.dataframe(display_df)
+    st.dataframe(result_final)
 
     st.subheader(":x: Unmatched Rows")
     unmatched_df = result_df[result_df["Description (proposed)"] == ""]
@@ -177,4 +192,4 @@ if estimation_file and price_list_files:
         if not unmatched_df.empty:
             unmatched_df.to_excel(writer, index=False, sheet_name="Unmatched Items")
 
-    st.download_button("\U0001F4E5 Download Cleaned Estimation File", buffer.getvalue(), file_name="Estimation_Result_BuildWise.xlsx")
+    st.download_button("📥 Download Cleaned Estimation File", buffer.getvalue(), file_name="Estimation_Result_BuildWise.xlsx")
