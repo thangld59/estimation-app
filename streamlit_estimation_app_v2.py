@@ -16,16 +16,26 @@ def clean(text):
     text = text.replace("/", " ").replace(",", "")
     text = text.replace("-", " ")
     text = text.replace("cáp", "").replace("cable", "").replace("dây", "")
-    text = text.replace("ống", " conduit ")  # Normalize Vietnamese "ống"
+    text = text.replace("ống", "conduit").replace("máng", "tray").replace("thang", "rack")
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+def extract_dimensions(text):
+    text = str(text).lower().replace(" ", "")
+    text = re.sub(r"[\(\)]", "", text)
+    match = re.search(r"w[=]?(\d{2,4})[x×h=]*(\d{2,4})[x×t=]*(\d{1,3})", text)
+    if not match:
+        match = re.search(r"(\d{2,4})[x×](\d{2,4})[x×](\d{1,3})", text)
+    if not match:
+        match = re.search(r"(\d{2,4})w(\d{2,4})h(\d{1,3})", text)
+    return "{}x{}x{}".format(*match.groups()) if match else ""
 
 def extract_size(text):
     text = str(text).lower()
     text = text.replace("mm2", "").replace("mm²", "")
-    text = text.replace("ø", "d").replace("phi", "d").replace("\u00d8", "d")
-    match = re.search(r"d?\s*(\d{1,3})\b", text)
-    return match.group(1) if match else ""
+    text = re.sub(r"(\d)c", r"\1", text)
+    match = re.search(r"\b\d{1,2}\s*[x×]\s*\d{1,3}\b", text)
+    return match.group(0).replace(" ", "") if match else ""
 
 # ------------------------------
 # App Configuration
@@ -73,7 +83,7 @@ if estimation_file and price_list_files:
         st.stop()
 
     est["combined"] = (est[est_cols[0]].fillna('') + " " + est[est_cols[1]].fillna('') + " " + est[est_cols[2]].fillna('')).apply(clean)
-    est["size"] = (est[est_cols[0]].fillna('') + " " + est[est_cols[1]].fillna('') + " " + est[est_cols[2]].fillna('')).apply(extract_size)
+    est["dimensions"] = (est[est_cols[0]].fillna('') + " " + est[est_cols[1]].fillna('') + " " + est[est_cols[2]].fillna('')).apply(extract_dimensions)
 
     db_frames = []
     if selected_file == "All files":
@@ -91,27 +101,24 @@ if estimation_file and price_list_files:
         st.stop()
 
     db["combined"] = (db[db_cols[0]].fillna('') + " " + db[db_cols[1]].fillna('') + " " + db[db_cols[2]].fillna('')).apply(clean)
-    db["size"] = (db[db_cols[0]].fillna('') + " " + db[db_cols[1]].fillna('') + " " + db[db_cols[2]].fillna('')).apply(extract_size)
+    db["dimensions"] = (db[db_cols[0]].fillna('') + " " + db[db_cols[1]].fillna('') + " " + db[db_cols[2]].fillna('')).apply(extract_dimensions)
 
     output_data = []
     for i, row in est.iterrows():
         query = row["combined"]
-        query_size = row["size"]
+        dim = row["dimensions"]
         qty = row[est_cols[4]]
         unit = row[est_cols[3]]
 
         best = None
-        category_keywords = ["conduit", "ống", "pipe"]
-        is_conduit = any(word in query for word in category_keywords)
-
-        if is_conduit and query_size:
-            db_filtered = db[db["size"] == query_size]
+        if dim:
+            db_filtered = db[db["dimensions"] == dim]
             if not db_filtered.empty:
                 db_filtered = db_filtered.copy()
                 db_filtered["score"] = db_filtered["combined"].apply(lambda x: fuzz.token_set_ratio(query, x))
-                db_filtered = db_filtered[db_filtered["score"] >= 70]  # Minimum threshold
-                if not db_filtered.empty:
-                    best = db_filtered.loc[db_filtered["score"].idxmax()]
+                top_match = db_filtered.loc[db_filtered["score"].idxmax()]
+                if top_match["score"] >= 85:
+                    best = top_match
 
         if best is not None:
             m_cost = pd.to_numeric(best[db_cols[4]], errors="coerce")
