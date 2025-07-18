@@ -23,43 +23,41 @@ def extract_size(text):
     text = str(text).lower()
     text = text.replace("mm2", "").replace("mm²", "")
     text = re.sub(r"(\d)c", r"\1", text)  # convert 4C -> 4
-    match = re.search(r'\b\d{1,2}\s*[x×]\s*\d{1,3}\b', text)
+    match = re.search(r'\b\d{1,2}\s*[x×]\s*\d{1,3}(\.\d+)?\b', text)
     return match.group(0).replace(" ", "") if match else ""
 
-def detect_category(text):
-    text = text.lower()
-    if any(keyword in text for keyword in ["cáp", "cable", "dây"]):
-        return "cable"
-    elif any(keyword in text for keyword in ["ống", "conduit", "emt", "imc", "pvc"]):
-        return "conduit"
-    elif any(keyword in text for keyword in ["thang cáp", "máng cáp", "tray", "ladder"]):
-        return "tray"
-    elif any(keyword in text for keyword in ["co", "tê", "nối", "elbow", "tee", "union"]):
-        return "fitting"
-    elif any(keyword in text for keyword in ["valve", "van"]):
-        return "valve"
-    elif any(keyword in text for keyword in ["panel", "board", "box", "tủ"]):
-        return "panel"
-    elif any(keyword in text for keyword in ["switch", "socket", "ổ cắm", "công tắc"]):
-        return "device"
-    elif any(keyword in text for keyword in ["đèn", "light", "fixture"]):
-        return "lighting"
-    elif any(keyword in text for keyword in ["support", "hanger", "bracket", "giá đỡ"]):
-        return "support"
-    elif any(keyword in text for keyword in ["quạt", "bơm", "pump", "fan"]):
-        return "equipment"
-    else:
-        return "misc"
+def extract_conduit_size(text):
+    text = str(text).lower()
+    match = re.search(r'(ø|phi)?\s*(\d{1,3})(mm)?', text)
+    return match.group(2) if match else ""
 
-def rule_based_match(row, db, db_cols):
-    category = detect_category(row["combined"])
-    query_size = row["size"]
-    if category in ["cable", "conduit", "tray", "fitting"] and query_size:
-        candidates = db[db["size"] == query_size].copy()
-        if not candidates.empty:
-            candidates["score"] = candidates["combined"].apply(lambda x: fuzz.token_set_ratio(row["combined"], x))
-            return candidates.loc[candidates["score"].idxmax()]
-    return None
+def extract_dimensions(text):
+    text = str(text).lower().replace(" ", "")
+    match = re.search(r'(\d{2,4})[x×](\d{2,4})', text)
+    return match.group(0) if match else ""
+
+def category_of(text):
+    text = text.lower()
+    if any(word in text for word in ["cáp", "cable", "dây điện"]):
+        return "cable"
+    elif any(word in text for word in ["ống", "conduit"]):
+        return "conduit"
+    elif any(word in text for word in ["máng cáp", "cable tray", "cable duct"]):
+        return "cable_tray"
+    elif any(word in text for word in ["thang cáp", "cable rack", "cable ladder"]):
+        return "cable_rack"
+    else:
+        return "other"
+
+def extract_attribute(row, cat):
+    desc = f"{row[0]} {row[1]} {row[2]}".lower()
+    if cat == "cable":
+        return extract_size(desc)
+    elif cat == "conduit":
+        return extract_conduit_size(desc)
+    elif cat in ["cable_tray", "cable_rack"]:
+        return extract_dimensions(desc)
+    return ""
 
 # ------------------------------
 # App Configuration
@@ -106,9 +104,6 @@ if estimation_file and price_list_files:
         st.error("Estimation file must have at least 5 columns.")
         st.stop()
 
-    est["combined"] = (est[est_cols[0]].fillna('') + " " + est[est_cols[1]].fillna('') + " " + est[est_cols[2]].fillna('')).apply(clean)
-    est["size"] = (est[est_cols[0]].fillna('') + " " + est[est_cols[1]].fillna('') + " " + est[est_cols[2]].fillna('')).apply(extract_size)
-
     db_frames = []
     if selected_file == "All files":
         for f in price_list_files:
@@ -120,26 +115,33 @@ if estimation_file and price_list_files:
         db = pd.read_excel(os.path.join(user_folder, selected_file)).dropna(how='all')
 
     db_cols = db.columns.tolist()
-    db["combined"] = (db[db_cols[0]].fillna('') + " " + db[db_cols[1]].fillna('') + " " + db[db_cols[2]].fillna('')).apply(clean)
-    db["size"] = (db[db_cols[0]].fillna('') + " " + db[db_cols[1]].fillna('') + " " + db[db_cols[2]].fillna('')).apply(extract_size)
+    if len(db_cols) < 7:
+        st.error("Price list file must have at least 7 columns.")
+        st.stop()
 
     output_data = []
-    for i, row in est.iterrows():
-        qty = row[est_cols[5]]
-        unit = row[est_cols[4]]
-        rule_match = rule_based_match(row, db, db_cols)
+    for _, row in est.iterrows():
+        category = category_of(" ".join([str(row[c]) for c in est_cols[:3]]))
+        attr = extract_attribute(row, category)
 
-        if rule_match is not None:
-            best = rule_match
-        else:
-            db_copy = db.copy()
-            db_copy["score"] = db_copy["combined"].apply(lambda x: fuzz.token_set_ratio(row["combined"], x))
-            best = db_copy.loc[db_copy["score"].idxmax()]
+        qty = row[est_cols[4]]
+        unit = row[est_cols[3]]
+        best = None
 
-        m_cost = pd.to_numeric(best[db_cols[4]], errors="coerce")
-        l_cost = pd.to_numeric(best[db_cols[5]], errors="coerce")
-        desc_proposed = best[db_cols[1]]
+        db["combined"] = (db[db_cols[0]].fillna('') + " " + db[db_cols[1]].fillna('') + " " + db[db_cols[2]].fillna('')).apply(clean)
 
+        if attr:
+            db_matches = db[db["combined"].str.contains(attr, na=False)]
+            if not db_matches.empty:
+                db_matches = db_matches.copy()
+                db_matches["score"] = db_matches["combined"].apply(lambda x: fuzz.token_set_ratio(" ".join([str(row[c]) for c in est_cols[:3]]), x))
+                db_matches = db_matches[db_matches["score"] >= 70]  # new rule
+                if not db_matches.empty:
+                    best = db_matches.loc[db_matches["score"].idxmax()]
+
+        m_cost = pd.to_numeric(best[db_cols[4]], errors="coerce") if best is not None else 0
+        l_cost = pd.to_numeric(best[db_cols[5]], errors="coerce") if best is not None else 0
+        desc_proposed = best[db_cols[1]] if best is not None else ""
         qty_val = pd.to_numeric(qty, errors="coerce")
         if pd.isna(qty_val): qty_val = 0
         amt_mat = qty_val * m_cost
@@ -147,8 +149,17 @@ if estimation_file and price_list_files:
         total = amt_mat + amt_lab
 
         output_data.append([
-            row[est_cols[0]], row[est_cols[1]], desc_proposed, row[est_cols[2]], row[est_cols[4]], qty,
-            m_cost, l_cost, amt_mat, amt_lab, total
+            row[est_cols[0]],  # Model
+            row[est_cols[1]],  # Description (requested)
+            desc_proposed,     # Description (proposed)
+            row[est_cols[2]],  # Specification
+            unit,              # Unit
+            qty,               # Quantity
+            m_cost,            # Material Cost
+            l_cost,            # Labour Cost
+            amt_mat,           # Amount Material
+            amt_lab,           # Amount Labour
+            total              # Total
         ])
 
     result_df = pd.DataFrame(output_data, columns=[
