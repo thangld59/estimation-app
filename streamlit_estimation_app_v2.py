@@ -23,41 +23,8 @@ def extract_size(text):
     text = str(text).lower()
     text = text.replace("mm2", "").replace("mm²", "")
     text = re.sub(r"(\d)c", r"\1", text)  # convert 4C -> 4
-    match = re.search(r'\b\d{1,2}\s*[x×]\s*\d{1,3}(\.\d+)?\b', text)
+    match = re.search(r'\b\d{1,2}\s*[x×]\s*\d{1,3}\b', text)
     return match.group(0).replace(" ", "") if match else ""
-
-def extract_conduit_size(text):
-    text = str(text).lower()
-    match = re.search(r'(ø|phi)?\s*(\d{1,3})(mm)?', text)
-    return match.group(2) if match else ""
-
-def extract_dimensions(text):
-    text = str(text).lower().replace(" ", "")
-    match = re.search(r'(\d{2,4})[x×](\d{2,4})', text)
-    return match.group(0) if match else ""
-
-def category_of(text):
-    text = text.lower()
-    if any(word in text for word in ["cáp", "cable", "dây điện"]):
-        return "cable"
-    elif any(word in text for word in ["ống", "conduit"]):
-        return "conduit"
-    elif any(word in text for word in ["máng cáp", "cable tray", "cable duct"]):
-        return "cable_tray"
-    elif any(word in text for word in ["thang cáp", "cable rack", "cable ladder"]):
-        return "cable_rack"
-    else:
-        return "other"
-
-def extract_attribute(row, cat):
-    desc = f"{row[0]} {row[1]} {row[2]}".lower()
-    if cat == "cable":
-        return extract_size(desc)
-    elif cat == "conduit":
-        return extract_conduit_size(desc)
-    elif cat in ["cable_tray", "cable_rack"]:
-        return extract_dimensions(desc)
-    return ""
 
 # ------------------------------
 # App Configuration
@@ -90,6 +57,13 @@ if uploaded_files:
 # ------------------------------
 st.subheader(":open_file_folder: Manage Price Lists")
 price_list_files = os.listdir(user_folder)
+if price_list_files:
+    delete_file = st.selectbox("Delete a file:", price_list_files)
+    if st.button("Delete Selected File"):
+        os.remove(os.path.join(user_folder, delete_file))
+        st.success(f"Deleted {delete_file}")
+        st.experimental_rerun()
+
 selected_file = st.radio("Choose one file to match or use all", ["All files"] + price_list_files)
 
 # ------------------------------
@@ -103,6 +77,9 @@ if estimation_file and price_list_files:
     if len(est_cols) < 5:
         st.error("Estimation file must have at least 5 columns.")
         st.stop()
+
+    est["combined"] = (est[est_cols[0]].fillna('') + " " + est[est_cols[1]].fillna('') + " " + est[est_cols[2]].fillna('')).apply(clean)
+    est["size"] = (est[est_cols[0]].fillna('') + " " + est[est_cols[1]].fillna('') + " " + est[est_cols[2]].fillna('')).apply(extract_size)
 
     db_frames = []
     if selected_file == "All files":
@@ -119,29 +96,32 @@ if estimation_file and price_list_files:
         st.error("Price list file must have at least 7 columns.")
         st.stop()
 
-    output_data = []
-    for _, row in est.iterrows():
-        category = category_of(" ".join([str(row[c]) for c in est_cols[:3]]))
-        attr = extract_attribute(row, category)
+    db["combined"] = (db[db_cols[0]].fillna('') + " " + db[db_cols[1]].fillna('') + " " + db[db_cols[2]].fillna('')).apply(clean)
+    db["size"] = (db[db_cols[0]].fillna('') + " " + db[db_cols[1]].fillna('') + " " + db[db_cols[2]].fillna('')).apply(extract_size)
 
+    output_data = []
+    for i, row in est.iterrows():
+        query = row["combined"]
+        query_size = row["size"]
         qty = row[est_cols[4]]
         unit = row[est_cols[3]]
+
         best = None
+        if query_size:
+            db_filtered = db[db["size"] == query_size]
+            if not db_filtered.empty:
+                db_filtered = db_filtered.copy()
+                db_filtered["score"] = db_filtered["combined"].apply(lambda x: fuzz.token_set_ratio(query, x))
+                best = db_filtered.loc[db_filtered["score"].idxmax()]
 
-        db["combined"] = (db[db_cols[0]].fillna('') + " " + db[db_cols[1]].fillna('') + " " + db[db_cols[2]].fillna('')).apply(clean)
+        if best is not None:
+            m_cost = pd.to_numeric(best[db_cols[4]], errors="coerce")
+            l_cost = pd.to_numeric(best[db_cols[5]], errors="coerce")
+            desc_proposed = best[db_cols[1]]
+        else:
+            m_cost = l_cost = 0
+            desc_proposed = ""
 
-        if attr:
-            db_matches = db[db["combined"].str.contains(attr, na=False)]
-            if not db_matches.empty:
-                db_matches = db_matches.copy()
-                db_matches["score"] = db_matches["combined"].apply(lambda x: fuzz.token_set_ratio(" ".join([str(row[c]) for c in est_cols[:3]]), x))
-                db_matches = db_matches[db_matches["score"] >= 70]  # new rule
-                if not db_matches.empty:
-                    best = db_matches.loc[db_matches["score"].idxmax()]
-
-        m_cost = pd.to_numeric(best[db_cols[4]], errors="coerce") if best is not None else 0
-        l_cost = pd.to_numeric(best[db_cols[5]], errors="coerce") if best is not None else 0
-        desc_proposed = best[db_cols[1]] if best is not None else ""
         qty_val = pd.to_numeric(qty, errors="coerce")
         if pd.isna(qty_val): qty_val = 0
         amt_mat = qty_val * m_cost
@@ -167,28 +147,31 @@ if estimation_file and price_list_files:
         "Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"
     ])
 
-    grand_total = pd.to_numeric(result_df["Total"], errors="coerce").sum()
-    grand_row = pd.DataFrame([[""] * 10 + [grand_total]], columns=result_df.columns)
-    result_final = pd.concat([result_df, grand_row], ignore_index=True)
+    if not result_df.empty:
+        grand_total = pd.to_numeric(result_df["Total"], errors="coerce").sum()
+        grand_row = pd.DataFrame([[""] * 10 + [grand_total]], columns=result_df.columns)
+        result_final = pd.concat([result_df, grand_row], ignore_index=True)
 
-    st.subheader(":mag: Matched Estimation")
-    display_df = result_final.copy()
-    display_df["Quantity"] = pd.to_numeric(display_df["Quantity"], errors="coerce").fillna(0).astype(int).map("{:,}".format)
-    for col in ["Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"]:
-        display_df[col] = pd.to_numeric(display_df[col], errors="coerce").fillna(0).astype(int).map("{:,}".format)
-    st.dataframe(display_df)
+        st.subheader(":mag: Matched Estimation")
+        display_df = result_final.copy()
+        display_df["Quantity"] = pd.to_numeric(display_df["Quantity"], errors="coerce").fillna(0).astype(int).map("{:,}".format)
+        for col in ["Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"]:
+            display_df[col] = pd.to_numeric(display_df[col], errors="coerce").fillna(0).astype(int).map("{:,}".format)
+        st.dataframe(display_df)
 
-    st.subheader(":x: Unmatched Rows")
-    unmatched_df = result_df[result_df["Description (proposed)"] == ""]
-    if not unmatched_df.empty:
-        st.dataframe(unmatched_df)
-    else:
-        st.info(":white_check_mark: All rows matched successfully!")
-
-    buffer = BytesIO()
-    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-        result_final.to_excel(writer, index=False, sheet_name="Matched Results")
+        st.subheader(":x: Unmatched Rows")
+        unmatched_df = result_df[result_df["Description (proposed)"] == ""]
         if not unmatched_df.empty:
-            unmatched_df.to_excel(writer, index=False, sheet_name="Unmatched Items")
+            st.dataframe(unmatched_df)
+        else:
+            st.info(":white_check_mark: All rows matched successfully!")
 
-    st.download_button("\U0001F4E5 Download Cleaned Estimation File", buffer.getvalue(), file_name="Estimation_Result_BuildWise.xlsx")
+        buffer = BytesIO()
+        with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+            result_final.to_excel(writer, index=False, sheet_name="Matched Results")
+            if not unmatched_df.empty:
+                unmatched_df.to_excel(writer, index=False, sheet_name="Unmatched Items")
+
+        st.download_button("\U0001F4E5 Download Cleaned Estimation File", buffer.getvalue(), file_name="Estimation_Result_BuildWise.xlsx")
+    else:
+        st.warning("No matches found. Please check your inputs.")
