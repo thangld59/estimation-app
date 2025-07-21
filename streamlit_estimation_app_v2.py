@@ -23,26 +23,6 @@ def extract_cable_size(text):
     match = re.search(r'\b\d{1,2}\s*[cx×]\s*\d{1,3}(\.\d+)?', text)
     return match.group(0).replace(" ", "") if match else ""
 
-def extract_voltage(text):
-    text = str(text).lower()
-    match = re.search(r'\b0[.,]?6[ /-]?1[.,]?0?k?[vV]?\b', text)
-    return "0.6/1kV" if match else ""
-
-def extract_material(text):
-    text = str(text).lower()
-    if "nhôm" in text or "al" in text or "aluminium" in text:
-        return "Al"
-    elif "cu" in text:
-        return "Cu"
-    return ""
-
-def extract_insulation(text):
-    text = str(text).lower()
-    for ins in ["xlpe", "pvc", "pe", "lszh"]:
-        if ins in text:
-            return ins.upper()
-    return ""
-
 def extract_conduit_size(text):
     text = str(text).lower()
     match = re.search(r'\b(d|ø|phi)?\s*\d{1,3}(mm)?\b', text)
@@ -58,27 +38,14 @@ def get_category_keywords(text):
 
 def match_row(row, db):
     category = get_category_keywords(row["combined"])
-    if category == "cable":
-        size = extract_cable_size(row["combined"])
-        voltage = extract_voltage(row["combined"])
-        material = extract_material(row["combined"])
-        insulation = extract_insulation(row["combined"])
-        db_filtered = db[db["category"] == "cable"].copy()
-        db_filtered["score"] = db_filtered["combined"].apply(lambda x: fuzz.token_set_ratio(row["combined"], x))
-        db_filtered = db_filtered[db_filtered["score"] >= 70]
-        if size:
-            db_filtered = db_filtered[db_filtered["combined"].str.contains(size, na=False)]
-        if not db_filtered.empty:
-            return db_filtered.loc[db_filtered["score"].idxmax()]
-    elif category == "conduit":
-        size = extract_conduit_size(row["combined"])
-        db_filtered = db[db["category"] == "conduit"].copy()
-        db_filtered["score"] = db_filtered["combined"].apply(lambda x: fuzz.token_set_ratio(row["combined"], x))
-        db_filtered = db_filtered[db_filtered["score"] >= 70]
-        if size:
-            db_filtered = db_filtered[db_filtered["combined"].str.contains(size, na=False)]
-        if not db_filtered.empty:
-            return db_filtered.loc[db_filtered["score"].idxmax()]
+    size = extract_cable_size(row["combined"]) if category == "cable" else extract_conduit_size(row["combined"])
+    db_filtered = db[db["category"] == category].copy()
+    db_filtered["score"] = db_filtered["combined"].apply(lambda x: fuzz.token_set_ratio(row["combined"], x))
+    db_filtered = db_filtered[db_filtered["score"] >= 70]
+    if size:
+        db_filtered = db_filtered[db_filtered["combined"].str.contains(size, na=False)]
+    if not db_filtered.empty:
+        return db_filtered.loc[db_filtered["score"].idxmax()]
     return None
 
 # ------------------------------
