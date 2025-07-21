@@ -8,222 +8,143 @@ from rapidfuzz import fuzz
 # ------------------------------
 # Utility Functions
 # ------------------------------
-def clean(text):
+def clean_text(text):
     text = str(text).lower()
-    text = re.sub(r"[()/,-]", " ", text)
-    text = re.sub(r"mm2|mm²", "", text)
-    text = re.sub(r"0[.,]?6[ /-]?1[.,]?0?k?[vV]?", "", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+    text = re.sub(r"0[,.]?6kv|1[,.]?0kv", "", text)
+    text = re.sub(r"mm2|mm²|\(.*?\)", "", text)
+    text = re.sub(r"[/,-]", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
-def extract_size_cable(text):
-    text = str(text).lower().replace(" ", "")
-    match = re.search(r"(\d{1,2}[cx×]\d{1,3}(\.\d+)?)", text)
-    return match.group(1) if match else ""
+def extract_cable_size(text):
+    text = text.lower()
+    match = re.search(r'\b\d{1,2}\s*[x×cC]\s*\d{1,3}(\.\d+)?\b', text)
+    return match.group(0).replace(" ", "") if match else ""
 
 def extract_voltage(text):
-    text = str(text).lower()
-    if re.search(r"0[.,]?6[ /-]?1[.,]?0?k?[vV]?", text):
-        return "0.6/1kV"
-    return ""
+    match = re.search(r'\b0[.,]?6[ /-]?1[.,]?0?k?[vV]?\b', text)
+    return "0.6/1kV" if match else ""
 
-def extract_material(text):
-    text = text.lower()
+def extract_cable_material(text):
     if "nhôm" in text or "al" in text or "aluminium" in text:
-        return "Al"
-    elif "cu" in text:
-        return "Cu"
+        return "al"
+    if "cu" in text or "đồng" in text:
+        return "cu"
     return ""
 
 def extract_insulation(text):
     for ins in ["xlpe", "pvc", "pe", "lszh"]:
-        if ins in text.lower():
-            return ins.upper()
+        if ins in text:
+            return ins
     return ""
 
 def extract_shield(text):
-    for s in ["swa", "sta", "armored", "tape", "shield"]:
-        if s in text.lower():
-            return s.upper()
+    for kw in ["swa", "sta", "armored", "tape", "screen", "shield"]:
+        if kw in text:
+            return kw
     return ""
 
-def extract_size_conduit(text):
-    text = str(text).lower()
-    match = re.search(r"\b(d|ø|phi)?\s*(\d{1,3})(mm)?\b", text)
-    return match.group(2) if match else ""
+def extract_conduit_size(text):
+    match = re.search(r'\b(d\s*\d{1,3}|(ø|phi)?\s*\d{1,3}(mm)?)\b', text.lower())
+    return match.group(0).replace(" ", "") if match else ""
 
-def extract_type_conduit(text):
-    for t in ["pvc", "hdpe", "imc", "emt", "rsc", "flexible", "corrugated", "ống mềm", "ống cứng"]:
-        if t.lower() in text.lower():
-            return t.upper()
+def extract_conduit_material(text):
+    for mat in ["thép", "inox", "nhựa", "aluminum", "galvanized"]:
+        if mat in text:
+            return mat
     return ""
 
-def extract_material_conduit(text):
-    for m in ["thép", "inox", "nhựa", "aluminum", "galvanized"]:
-        if m.lower() in text.lower():
-            return m.lower()
+def extract_conduit_type(text):
+    for typ in ["pvc", "hdpe", "imc", "emt", "rsc", "flexible", "corrugated", "ống mềm", "ống cứng"]:
+        if typ in text:
+            return typ
     return ""
 
-def is_cable(text):
-    return any(x in text.lower() for x in ["cáp", "cable", "dây điện", "wire"])
-
-def is_conduit(text):
-    return any(x in text.lower() for x in ["ống", "conduit", "ống luồn", "ống dây", "ống mềm", "flexible"])
-
-def cable_score(row1, row2):
-    score = 0
-    if row1["size"] and row1["size"] == row2["size"]:
-        score += 40
-    if row1["material"] == row2["material"]:
-        score += 20
-    if row1["insulation"] == row2["insulation"]:
-        score += 10
-    if row1["shield"] == row2["shield"]:
-        score += 5
-    if row1["voltage"] == row2["voltage"]:
-        score += 10
-    token_score = fuzz.token_set_ratio(row1["combined"], row2["combined"])
-    return score + token_score * 0.15
-
-def conduit_score(row1, row2):
-    score = 0
-    if row1["size"] and row1["size"] == row2["size"]:
-        score += 40
-    if row1["type"] == row2["type"]:
-        score += 25
-    if row1["material"] == row2["material"]:
-        score += 20
-    token_score = fuzz.token_set_ratio(row1["combined"], row2["combined"])
-    return score + token_score * 0.15
+def contains_keywords(text, keywords):
+    return any(kw in text for kw in keywords)
 
 # ------------------------------
-# Streamlit UI
+# Matching Function
 # ------------------------------
-st.set_page_config(page_title="BuildWise", page_icon="📀", layout="wide")
-st.image("assets/logo.png", width=120)
-st.title(":triangular_ruler: BuildWise - Smart Estimation Tool")
+def match_items(est_df, db_df):
+    output_rows = []
+    for _, row in est_df.iterrows():
+        query = row["combined"]
+        match_type = "none"
+        best_match = None
+        best_score = 0
 
-username = st.sidebar.text_input("Username")
-if not username:
-    st.warning("Please enter your username to continue.")
-    st.stop()
+        # Detect if it's a cable
+        is_cable = contains_keywords(query, ["cáp", "cable", "dây điện", "wire"])
+        is_conduit = contains_keywords(query, ["ống", "conduit", "ống luồn", "ống dây", "ống mềm", "flexible"])
 
-user_folder = f"user_data/{username}"
-os.makedirs(user_folder, exist_ok=True)
+        if is_cable:
+            size = extract_cable_size(query)
+            voltage = extract_voltage(query)
+            material = extract_cable_material(query)
+            insulation = extract_insulation(query)
+            shield = extract_shield(query)
 
-st.subheader(":file_folder: Upload Price List Files")
-uploaded_files = st.file_uploader("Upload one or more Excel files", type=["xlsx"], accept_multiple_files=True)
-if uploaded_files:
-    for file in uploaded_files:
-        with open(os.path.join(user_folder, file.name), "wb") as f:
-            f.write(file.read())
-    st.success(":white_check_mark: Price list uploaded successfully.")
+            candidates = db_df.copy()
+            candidates["score"] = 0
+            for i, db_row in candidates.iterrows():
+                db_text = db_row["combined"]
+                score = 0
+                if size and size in db_text:
+                    score += 40
+                if material and material in db_text:
+                    score += 15
+                if insulation and insulation in db_text:
+                    score += 15
+                if shield and shield in db_text:
+                    score += 10
+                if voltage and voltage in db_text:
+                    score += 10
+                score += fuzz.token_set_ratio(query, db_text) * 0.1
+                candidates.at[i, "score"] = score
 
-st.subheader(":open_file_folder: Manage Price Lists")
-price_list_files = os.listdir(user_folder)
-selected_file = st.radio("Choose one file to match or use all", ["All files"] + price_list_files)
+            best = candidates.loc[candidates["score"].idxmax()]
+            if best["score"] >= 70:
+                best_match = best
+                match_type = "cable"
 
-st.subheader(":page_facing_up: Upload Estimation File")
-estimation_file = st.file_uploader("Upload estimation request (.xlsx)", type=["xlsx"], key="est")
+        elif is_conduit:
+            size = extract_conduit_size(query)
+            material = extract_conduit_material(query)
+            typ = extract_conduit_type(query)
 
-if estimation_file and price_list_files:
-    est = pd.read_excel(estimation_file).dropna(how='all')
-    est_cols = est.columns.tolist()
-    if len(est_cols) < 5:
-        st.error("Estimation file must have at least 5 columns.")
-        st.stop()
+            candidates = db_df.copy()
+            candidates["score"] = 0
+            for i, db_row in candidates.iterrows():
+                db_text = db_row["combined"]
+                score = 0
+                if size and size in db_text:
+                    score += 40
+                if material and material in db_text:
+                    score += 25
+                if typ and typ in db_text:
+                    score += 15
+                score += fuzz.token_set_ratio(query, db_text) * 0.1
+                candidates.at[i, "score"] = score
 
-    est["combined"] = (est[est_cols[0]].fillna("") + " " + est[est_cols[1]].fillna("") + " " + est[est_cols[2]].fillna("")).apply(clean)
-    est["category"] = est["combined"].apply(lambda x: "cable" if is_cable(x) else ("conduit" if is_conduit(x) else "other"))
-    est["size"] = est["combined"].apply(lambda x: extract_size_cable(x) if is_cable(x) else extract_size_conduit(x))
-    est["voltage"] = est["combined"].apply(extract_voltage)
-    est["material"] = est["combined"].apply(extract_material)
-    est["insulation"] = est["combined"].apply(extract_insulation)
-    est["shield"] = est["combined"].apply(extract_shield)
-    est["type"] = est["combined"].apply(extract_type_conduit)
-    est["mat2"] = est["combined"].apply(extract_material_conduit)
+            best = candidates.loc[candidates["score"].idxmax()]
+            if best["score"] >= 70:
+                best_match = best
+                match_type = "conduit"
 
-    db_frames = []
-    if selected_file == "All files":
-        for f in price_list_files:
-            df = pd.read_excel(os.path.join(user_folder, f)).dropna(how='all')
-            df["source"] = f
-            db_frames.append(df)
-        db = pd.concat(db_frames, ignore_index=True)
-    else:
-        db = pd.read_excel(os.path.join(user_folder, selected_file)).dropna(how='all')
+        if not best_match:
+            best_match = pd.Series([None] * len(db_df.columns), index=db_df.columns)
 
-    db_cols = db.columns.tolist()
-    db["combined"] = (db[db_cols[0]].fillna("") + " " + db[db_cols[1]].fillna("") + " " + db[db_cols[2]].fillna("")).apply(clean)
-    db["category"] = db["combined"].apply(lambda x: "cable" if is_cable(x) else ("conduit" if is_conduit(x) else "other"))
-    db["size"] = db["combined"].apply(lambda x: extract_size_cable(x) if is_cable(x) else extract_size_conduit(x))
-    db["voltage"] = db["combined"].apply(extract_voltage)
-    db["material"] = db["combined"].apply(extract_material)
-    db["insulation"] = db["combined"].apply(extract_insulation)
-    db["shield"] = db["combined"].apply(extract_shield)
-    db["type"] = db["combined"].apply(extract_type_conduit)
-    db["mat2"] = db["combined"].apply(extract_material_conduit)
+        qty = pd.to_numeric(row["Quantity"], errors="coerce") or 0
+        m_cost = pd.to_numeric(best_match.iloc[4], errors="coerce") or 0
+        l_cost = pd.to_numeric(best_match.iloc[5], errors="coerce") or 0
 
-    output_data = []
-    for _, row in est.iterrows():
-        cat = row["category"]
-        filtered_db = db[db["category"] == cat]
-        if row["size"]:  # apply size filtering
-            filtered_db = filtered_db[filtered_db["size"] == row["size"]]
-
-        if not filtered_db.empty:
-            scores = filtered_db.apply(lambda x: cable_score(row, x) if cat == "cable" else conduit_score(row, x), axis=1)
-            best_match = filtered_db.loc[scores.idxmax()]
-            best_score = scores.max()
-        else:
-            best_match = None
-            best_score = 0
-
-        if best_match is not None and best_score >= 70:
-            desc_proposed = best_match[db_cols[1]]
-            m_cost = pd.to_numeric(best_match[db_cols[4]], errors="coerce")
-            l_cost = pd.to_numeric(best_match[db_cols[5]], errors="coerce")
-        else:
-            desc_proposed = ""
-            m_cost = l_cost = 0
-
-        qty_val = pd.to_numeric(row[est_cols[4]], errors="coerce")
-        qty_val = 0 if pd.isna(qty_val) else qty_val
-        amt_mat = qty_val * m_cost
-        amt_lab = qty_val * l_cost
-        total = amt_mat + amt_lab
-
-        output_data.append([
-            row[est_cols[0]], row[est_cols[1]], desc_proposed, row[est_cols[2]],
-            row[est_cols[3]], row[est_cols[4]], m_cost, l_cost, amt_mat, amt_lab, total
+        output_rows.append([
+            row["Model"], row["Description"], best_match.iloc[1] or "", row["Specification"],
+            row["Unit"], row["Quantity"], m_cost, l_cost,
+            qty * m_cost, qty * l_cost, qty * (m_cost + l_cost)
         ])
-
-    result_df = pd.DataFrame(output_data, columns=[
-        "Model", "Description (requested)", "Description (proposed)", "Specification",
-        "Unit", "Quantity", "Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"
+    return pd.DataFrame(output_rows, columns=[
+        "Model", "Description (requested)", "Description (proposed)", "Specification", "Unit", "Quantity",
+        "Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"
     ])
-
-    grand_total = pd.to_numeric(result_df["Total"], errors="coerce").sum()
-    result_df.loc[len(result_df.index)] = [""] * 10 + [grand_total]
-
-    st.subheader(":mag: Matched Estimation")
-    display_df = result_df.copy()
-    display_df["Quantity"] = pd.to_numeric(display_df["Quantity"], errors="coerce").fillna(0).astype(int).map("{:,}".format)
-    for col in ["Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"]:
-        display_df[col] = pd.to_numeric(display_df[col], errors="coerce").fillna(0).astype(int).map("{:,}".format)
-    st.dataframe(display_df)
-
-    st.subheader(":x: Unmatched Rows")
-    unmatched_df = result_df[result_df["Description (proposed)"] == ""]
-    if not unmatched_df.empty:
-        st.dataframe(unmatched_df)
-    else:
-        st.info(":white_check_mark: All rows matched successfully!")
-
-    buffer = BytesIO()
-    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-        result_df.to_excel(writer, index=False, sheet_name="Matched Results")
-        if not unmatched_df.empty:
-            unmatched_df.to_excel(writer, index=False, sheet_name="Unmatched Items")
-
-    st.download_button("📥 Download Cleaned Estimation File", buffer.getvalue(), file_name="Estimation_Result_BuildWise.xlsx")
