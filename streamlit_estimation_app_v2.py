@@ -10,61 +10,99 @@ from rapidfuzz import fuzz
 # ------------------------------
 def clean(text):
     text = str(text).lower()
+    text = re.sub(r"[()\[\],]", " ", text)
     text = text.replace("mm2", "").replace("mm²", "")
-    text = text.replace("(", "").replace(")", "")
     text = text.replace("/", " ").replace(",", "")
     text = text.replace("-", " ")
+    text = text.replace("cáp", "").replace("cable", "").replace("dây", "").replace("wire", "")
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
-def extract_cable_size(text):
-    match = re.search(r'\b\d{1,2}\s*[cCx×]\s*\d{1,3}(\.\d+)?', text)
-    return match.group(0).replace(" ", "") if match else ""
+def extract_size(text):
+    text = str(text).lower()
+    text = re.sub(r"(mm2|mm²)", "", text)
+    size_match = re.search(r"\b\d{1,2}\s*[x×]\s*\d{1,3}(\.\d+)?\b", text)
+    if size_match:
+        return size_match.group(0).replace(" ", "")
+    alt_match = re.search(r"\b(d|ø|phi)?\s*\d{1,3}(mm)?\b", text)
+    if alt_match:
+        return alt_match.group(0).replace(" ", "")
+    return ""
 
 def extract_voltage(text):
-    match = re.search(r'\b0[.,]?6[ /-]?1[.,]?0?k?[vV]?\b', text)
+    match = re.search(r"\b0[.,]?6[ /-]?1[.,]?0?k?[vV]?\b", str(text))
     return "0.6/1kV" if match else ""
 
 def extract_material(text):
+    text = text.lower()
     if "nhôm" in text or "al" in text or "aluminium" in text:
-        return "Al"
-    if "cu" in text:
-        return "Cu"
+        return "al"
+    if "cu" in text or "đồng" in text:
+        return "cu"
     return ""
 
 def extract_insulation(text):
-    for ins in ["XLPE", "PVC", "PE", "LSZH"]:
-        if ins.lower() in text:
-            return ins.upper()
+    for ins in ["xlpe", "pvc", "pe", "lszh"]:
+        if ins in text.lower():
+            return ins
     return ""
 
-def extract_shielding(text):
-    for key in ["screen", "tape", "armored", "swa", "sta", "a"]:
-        if key in text:
-            return key
-    return ""
-
-def extract_conduit_size(text):
-    match = re.search(r'\b(d|ø|phi)?\s*\d{1,3}(mm)?\b', text)
-    return match.group(0).replace(" ", "") if match else ""
-
-def extract_conduit_type(text):
+def extract_type_conduit(text):
     for t in ["pvc", "hdpe", "imc", "emt", "rsc", "flexible", "corrugated", "ống mềm", "ống cứng"]:
-        if t in text:
-            return t
+        if t.lower() in text.lower():
+            return t.lower()
     return ""
 
-def extract_conduit_material(text):
-    for mat in ["thép", "inox", "nhựa", "aluminum", "galvanized"]:
-        if mat in text:
-            return mat
-    return ""
+def extract_category(text, type_):
+    text = text.lower()
+    if type_ == "cable":
+        return any(k in text for k in ["cáp", "cable", "dây điện", "wire"])
+    if type_ == "conduit":
+        return any(k in text for k in ["ống", "conduit", "ống luồn", "ống dây", "ống mềm", "flexible"])
+    return False
 
-def is_cable_category(text):
-    return any(k in text for k in ["cáp", "cable", "dây điện", "wire"])
+def match_row(row, db, db_cols, item_type="cable"):
+    query_text = clean(row["combined"])
+    query_size = extract_size(row["combined"])
+    query_voltage = extract_voltage(row["combined"]) if item_type == "cable" else ""
+    query_material = extract_material(row["combined"])
+    query_insulation = extract_insulation(row["combined"]) if item_type == "cable" else ""
+    query_type = extract_type_conduit(row["combined"]) if item_type == "conduit" else ""
 
-def is_conduit_category(text):
-    return any(k in text for k in ["ống", "conduit", "ống luồn", "ống dây", "ống mềm", "flexible"])
+    filtered = db.copy()
+
+    # Category keywords mandatory
+    filtered = filtered[filtered["category_match"] == True]
+
+    # Filter by size (mandatory)
+    if query_size:
+        filtered = filtered[filtered["size"] == query_size]
+    else:
+        return None  # Size required
+
+    if filtered.empty:
+        return None
+
+    # Optional boosting
+    def score_func(x):
+        score = fuzz.token_set_ratio(query_text, x["cleaned"])
+        if item_type == "cable":
+            if query_voltage and extract_voltage(x["combined"]) == query_voltage:
+                score += 10
+            if query_material and extract_material(x["combined"]) == query_material:
+                score += 15
+            if query_insulation and extract_insulation(x["combined"]) == query_insulation:
+                score += 10
+        elif item_type == "conduit":
+            if query_type and extract_type_conduit(x["combined"]) == query_type:
+                score += 10
+            if query_material and extract_material(x["combined"]) == query_material:
+                score += 15
+        return score
+
+    filtered["score"] = filtered.apply(score_func, axis=1)
+    best = filtered.sort_values("score", ascending=False).iloc[0]
+    return best if best["score"] >= 70 else None
 
 # ------------------------------
 # App Configuration
@@ -110,11 +148,7 @@ if estimation_file and price_list_files:
     if len(est_cols) < 5:
         st.error("Estimation file must have at least 5 columns.")
         st.stop()
-
-    est["combined"] = (est[est_cols[0]].fillna('') + " " +
-                       est[est_cols[1]].fillna('') + " " +
-                       est[est_cols[2]].fillna('')).apply(lambda x: clean(x))
-    est["type"] = est["combined"].apply(lambda x: "conduit" if is_conduit_category(x) else "cable" if is_cable_category(x) else "other")
+    est["combined"] = (est[est_cols[0]].fillna('') + " " + est[est_cols[1]].fillna('') + " " + est[est_cols[2]].fillna(''))
 
     db_frames = []
     if selected_file == "All files":
@@ -127,45 +161,24 @@ if estimation_file and price_list_files:
         db = pd.read_excel(os.path.join(user_folder, selected_file)).dropna(how='all')
 
     db_cols = db.columns.tolist()
-    if len(db_cols) < 6:
-        st.error("Price list file must have at least 6 columns.")
-        st.stop()
-
-    db["combined"] = (db[db_cols[0]].fillna('') + " " +
-                      db[db_cols[1]].fillna('') + " " +
-                      db[db_cols[2]].fillna('')).apply(lambda x: clean(x))
+    db["combined"] = (db[db_cols[0]].fillna('') + " " + db[db_cols[1]].fillna('') + " " + db[db_cols[2]].fillna(''))
+    db["cleaned"] = db["combined"].apply(clean)
+    db["size"] = db["combined"].apply(extract_size)
+    db["category_match"] = db["combined"].apply(lambda x: extract_category(x, "cable") or extract_category(x, "conduit"))
 
     output_data = []
-    for i, row in est.iterrows():
-        qtype = row["type"]
-        query = row["combined"]
+    for _, row in est.iterrows():
         unit = row[est_cols[3]]
         qty = row[est_cols[4]]
+        row["combined"] = str(row[est_cols[0]]) + " " + str(row[est_cols[1]]) + " " + str(row[est_cols[2]])
+        best_match = match_row(row, db, db_cols, "cable")
+        if not best_match:
+            best_match = match_row(row, db, db_cols, "conduit")
 
-        best = None
-        if qtype == "cable":
-            size = extract_cable_size(query)
-            voltage = extract_voltage(query)
-            db_filtered = db[db["combined"].str.contains(size, na=False)]
-            db_filtered = db_filtered[db_filtered["combined"].str.contains("cáp|cable|dây điện|wire", na=False)]
-        elif qtype == "conduit":
-            size = extract_conduit_size(query)
-            db_filtered = db[db["combined"].str.contains(size, na=False)]
-            db_filtered = db_filtered[db_filtered["combined"].str.contains("ống|conduit|ống luồn|ống dây|ống mềm|flexible", na=False)]
-        else:
-            db_filtered = db
-
-        if not db_filtered.empty:
-            db_filtered = db_filtered.copy()
-            db_filtered["score"] = db_filtered["combined"].apply(lambda x: fuzz.token_set_ratio(query, x))
-            db_filtered = db_filtered[db_filtered["score"] >= 70]
-            if not db_filtered.empty:
-                best = db_filtered.loc[db_filtered["score"].idxmax()]
-
-        if best is not None:
-            desc_proposed = best[db_cols[1]]
-            m_cost = pd.to_numeric(best[db_cols[4]], errors="coerce")
-            l_cost = pd.to_numeric(best[db_cols[5]], errors="coerce")
+        if best_match is not None:
+            desc_proposed = best_match[db_cols[1]]
+            m_cost = pd.to_numeric(best_match[db_cols[4]], errors="coerce")
+            l_cost = pd.to_numeric(best_match[db_cols[5]], errors="coerce")
         else:
             desc_proposed = ""
             m_cost = l_cost = 0
@@ -177,22 +190,24 @@ if estimation_file and price_list_files:
         total = amt_mat + amt_lab
 
         output_data.append([
-            row[est_cols[0]], row[est_cols[1]], desc_proposed,
-            row[est_cols[2]], unit, qty, m_cost, l_cost, amt_mat, amt_lab, total
+            row[est_cols[0]], row[est_cols[1]], desc_proposed, row[est_cols[2]], unit, qty,
+            m_cost, l_cost, amt_mat, amt_lab, total
         ])
 
     result_df = pd.DataFrame(output_data, columns=[
-        "Model", "Description (requested)", "Description (proposed)", "Specification",
-        "Unit", "Quantity", "Material Cost", "Labour Cost",
-        "Amount Material", "Amount Labour", "Total"
+        "Model", "Description (requested)", "Description (proposed)", "Specification", "Unit", "Quantity",
+        "Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"
     ])
-
     grand_total = pd.to_numeric(result_df["Total"], errors="coerce").sum()
     grand_row = pd.DataFrame([[''] * 10 + [grand_total]], columns=result_df.columns)
     result_final = pd.concat([result_df, grand_row], ignore_index=True)
 
     st.subheader(":mag: Matched Estimation")
-    st.dataframe(result_final)
+    display_df = result_final.copy()
+    display_df["Quantity"] = pd.to_numeric(display_df["Quantity"], errors="coerce").fillna(0).astype(int).map("{:,}".format)
+    for col in ["Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"]:
+        display_df[col] = pd.to_numeric(display_df[col], errors="coerce").fillna(0).astype(int).map("{:,}".format)
+    st.dataframe(display_df)
 
     st.subheader(":x: Unmatched Rows")
     unmatched_df = result_df[result_df["Description (proposed)"] == ""]
