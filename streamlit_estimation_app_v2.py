@@ -1,8 +1,3 @@
-
-# ✅ BuildWise Estimation Tool - Fully Integrated Version
-# Includes working matching logic for both cable and conduit categories
-# Final version ready for direct deployment
-
 import streamlit as st
 import pandas as pd
 import os
@@ -33,67 +28,38 @@ def extract_conduit_size(text):
     match = re.search(r'\b(d|ø|phi)?\s*\d{1,3}(mm)?\b', text)
     return match.group(0).replace(" ", "") if match else ""
 
-def extract_voltage(text):
-    text = str(text).lower()
-    match = re.search(r'\b0[.,]?6[ /-]?1[.,]?0?k?[vV]?\b', text)
-    return "0.6/1kV" if match else ""
-
-def extract_material(text):
-    text = str(text).lower()
-    if "nhôm" in text or "al" in text or "aluminium" in text:
-        return "Al"
-    elif "cu" in text:
-        return "Cu"
-    return ""
-
-def extract_insulation(text):
-    text = str(text).lower()
-    for ins in ["xlpe", "pvc", "pe", "lszh"]:
-        if ins in text:
-            return ins.upper()
-    return ""
-
 def get_category_keywords(text):
     text = text.lower()
-    if any(k in text for k in ["cáp", "cable", "dây điện", "wire"]):
-        return "cable"
     if any(k in text for k in ["ống", "conduit", "ống luồn", "ống dây", "ống mềm", "flexible"]):
         return "conduit"
+    if any(k in text for k in ["cáp", "cable", "dây điện", "wire"]):
+        return "cable"
     return "other"
 
 def match_row(row, db):
     category = get_category_keywords(row["combined"])
     if category == "cable":
         size = extract_cable_size(row["combined"])
-        voltage = extract_voltage(row["combined"])
-        material = extract_material(row["combined"])
-        insulation = extract_insulation(row["combined"])
         db_filtered = db[db["category"] == "cable"].copy()
-        if size:
-            db_filtered = db_filtered[db_filtered["combined"].str.contains(size)]
-        if voltage:
-            db_filtered = db_filtered[db_filtered["combined"].str.contains(voltage, na=False)]
-        if material:
-            db_filtered = db_filtered[db_filtered["combined"].str.contains(material.lower(), na=False)]
-        if insulation:
-            db_filtered = db_filtered[db_filtered["combined"].str.contains(insulation.lower(), na=False)]
         db_filtered["score"] = db_filtered["combined"].apply(lambda x: fuzz.token_set_ratio(row["combined"], x))
         db_filtered = db_filtered[db_filtered["score"] >= 70]
+        if size:
+            db_filtered = db_filtered[db_filtered["combined"].str.contains(size, na=False)]
         if not db_filtered.empty:
             return db_filtered.loc[db_filtered["score"].idxmax()]
     elif category == "conduit":
         size = extract_conduit_size(row["combined"])
         db_filtered = db[db["category"] == "conduit"].copy()
-        if size:
-            db_filtered = db_filtered[db_filtered["combined"].str.contains(size)]
         db_filtered["score"] = db_filtered["combined"].apply(lambda x: fuzz.token_set_ratio(row["combined"], x))
         db_filtered = db_filtered[db_filtered["score"] >= 70]
+        if size:
+            db_filtered = db_filtered[db_filtered["combined"].str.contains(size, na=False)]
         if not db_filtered.empty:
             return db_filtered.loc[db_filtered["score"].idxmax()]
     return None
 
 # ------------------------------
-# Streamlit App Starts
+# Streamlit App
 # ------------------------------
 st.set_page_config(page_title="BuildWise", page_icon="📀", layout="wide")
 st.image("assets/logo.png", width=120)
