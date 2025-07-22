@@ -5,6 +5,9 @@ import re
 from io import BytesIO
 from rapidfuzz import fuzz
 
+# ------------------------------
+# Utility Functions
+# ------------------------------
 def clean(text):
     text = str(text).lower()
     text = re.sub(r"0[,.]?6kv|1[,.]?0kv", "", text)
@@ -25,7 +28,7 @@ def extract_conduit_size(text):
     match = re.search(r'\b(d|ø|phi)?\s*\d{1,3}(mm)?\b', text)
     return match.group(0).replace(" ", "") if match else ""
 
-def get_category_keywords(text):
+def get_category(text):
     text = text.lower()
     if any(k in text for k in ["cáp", "cable", "dây điện", "wire"]):
         return "cable"
@@ -33,29 +36,31 @@ def get_category_keywords(text):
         return "conduit"
     return "other"
 
-def match_row(row, db):
-    category = row["category"]
+def match_item(row, db):
+    category = get_category(row["combined"])
+    size = ""
     if category == "cable":
         size = extract_cable_size(row["combined"])
         db_filtered = db[db["category"] == "cable"].copy()
-        db_filtered["score"] = db_filtered["combined"].apply(lambda x: fuzz.token_set_ratio(row["combined"], x))
-        db_filtered = db_filtered[db_filtered["score"] >= 70]
-        if size:
-            db_filtered = db_filtered[db_filtered["combined"].str.contains(size, na=False)]
-        if not db_filtered.empty:
-            return db_filtered.loc[db_filtered["score"].idxmax()]
     elif category == "conduit":
         size = extract_conduit_size(row["combined"])
         db_filtered = db[db["category"] == "conduit"].copy()
+    else:
+        return None
+
+    if size:
+        db_filtered = db_filtered[db_filtered["size"] == size]
+
+    if not db_filtered.empty:
         db_filtered["score"] = db_filtered["combined"].apply(lambda x: fuzz.token_set_ratio(row["combined"], x))
         db_filtered = db_filtered[db_filtered["score"] >= 70]
-        if size:
-            db_filtered = db_filtered[db_filtered["combined"].str.contains(size, na=False)]
         if not db_filtered.empty:
             return db_filtered.loc[db_filtered["score"].idxmax()]
     return None
 
-# Streamlit Interface
+# ------------------------------
+# App UI
+# ------------------------------
 st.set_page_config(page_title="BuildWise", page_icon="📀", layout="wide")
 st.image("assets/logo.png", width=120)
 st.title(":triangular_ruler: BuildWise - Smart Estimation Tool")
@@ -68,6 +73,7 @@ if not username:
 user_folder = f"user_data/{username}"
 os.makedirs(user_folder, exist_ok=True)
 
+# Upload price list
 st.subheader(":file_folder: Upload Price List Files")
 uploaded_files = st.file_uploader("Upload one or more Excel files", type=["xlsx"], accept_multiple_files=True)
 if uploaded_files:
@@ -76,21 +82,22 @@ if uploaded_files:
             f.write(file.read())
     st.success(":white_check_mark: Price list uploaded successfully.")
 
+# File management
 st.subheader(":open_file_folder: Manage Price Lists")
 price_list_files = os.listdir(user_folder)
 selected_file = st.radio("Choose one file to match or use all", ["All files"] + price_list_files)
 
+# Upload estimation file
 st.subheader(":page_facing_up: Upload Estimation File")
 estimation_file = st.file_uploader("Upload estimation request (.xlsx)", type=["xlsx"], key="est")
 if estimation_file and price_list_files:
-    est = pd.read_excel(estimation_file).dropna(how="all")
+    est = pd.read_excel(estimation_file).dropna(how='all')
     est_cols = est.columns.tolist()
     if len(est_cols) < 5:
         st.error("Estimation file must have at least 5 columns.")
         st.stop()
 
     est["combined"] = (est[est_cols[0]].fillna("") + " " + est[est_cols[1]].fillna("") + " " + est[est_cols[2]].fillna("")).apply(clean)
-    est["category"] = est["combined"].apply(get_category_keywords)
 
     db_frames = []
     if selected_file == "All files":
@@ -103,16 +110,13 @@ if estimation_file and price_list_files:
         db = pd.read_excel(os.path.join(user_folder, selected_file)).dropna(how="all")
 
     db_cols = db.columns.tolist()
-    if len(db_cols) < 6:
-        st.error("Price list file must have at least 6 columns.")
-        st.stop()
-
     db["combined"] = (db[db_cols[0]].fillna("") + " " + db[db_cols[1]].fillna("") + " " + db[db_cols[2]].fillna("")).apply(clean)
-    db["category"] = db["combined"].apply(get_category_keywords)
+    db["category"] = db["combined"].apply(get_category)
+    db["size"] = db["combined"].apply(lambda x: extract_cable_size(x) if get_category(x) == "cable" else extract_conduit_size(x))
 
     output_data = []
     for _, row in est.iterrows():
-        best = match_row(row, db)
+        best = match_item(row, db)
         unit = row[est_cols[3]]
         qty = row[est_cols[4]]
         if best is not None:
