@@ -23,6 +23,11 @@ def extract_cable_size(text):
     match = re.search(r'\b\d{1,2}\s*[cx×]\s*\d{1,3}(\.\d+)?', text)
     return match.group(0).replace(" ", "") if match else ""
 
+def extract_conduit_size(text):
+    text = str(text).lower()
+    match = re.search(r'\b(d|ø|phi)?\s*\d{1,3}(mm)?\b', text)
+    return match.group(0).replace(" ", "") if match else ""
+
 def extract_voltage(text):
     text = str(text).lower()
     match = re.search(r'\b0[.,]?6[ /-]?1[.,]?0?k?[vV]?\b', text)
@@ -43,10 +48,12 @@ def extract_insulation(text):
             return ins.upper()
     return ""
 
-def extract_conduit_size(text):
+def extract_shielding(text):
     text = str(text).lower()
-    match = re.search(r'\b(d|ø|phi)?\s*\d{1,3}(mm)?\b', text)
-    return match.group(0).replace(" ", "") if match else ""
+    for shield in ["screen", "tape", "shield", "armored", "swa", "sta", "a"]:
+        if shield in text:
+            return True
+    return False
 
 def get_category_keywords(text):
     text = text.lower()
@@ -60,9 +67,6 @@ def match_row(row, db):
     category = get_category_keywords(row["combined"])
     if category == "cable":
         size = extract_cable_size(row["combined"])
-        voltage = extract_voltage(row["combined"])
-        material = extract_material(row["combined"])
-        insulation = extract_insulation(row["combined"])
         db_filtered = db[db["category"] == "cable"].copy()
         db_filtered["score"] = db_filtered["combined"].apply(lambda x: fuzz.token_set_ratio(row["combined"], x))
         db_filtered = db_filtered[db_filtered["score"] >= 70]
@@ -82,7 +86,7 @@ def match_row(row, db):
     return None
 
 # ------------------------------
-# App Logic
+# App UI
 # ------------------------------
 st.set_page_config(page_title="BuildWise", page_icon="📀", layout="wide")
 st.image("assets/logo.png", width=120)
@@ -116,7 +120,6 @@ if estimation_file and price_list_files:
     if len(est_cols) < 5:
         st.error("Estimation file must have at least 5 columns.")
         st.stop()
-
     est["combined"] = (est[est_cols[0]].fillna("") + " " + est[est_cols[1]].fillna("") + " " + est[est_cols[2]].fillna("")).apply(clean)
 
     db_frames = []
@@ -133,7 +136,6 @@ if estimation_file and price_list_files:
     if len(db_cols) < 6:
         st.error("Price list file must have at least 6 columns.")
         st.stop()
-
     db["combined"] = (db[db_cols[0]].fillna("") + " " + db[db_cols[1]].fillna("") + " " + db[db_cols[2]].fillna("")).apply(clean)
     db["category"] = db["combined"].apply(get_category_keywords)
 
