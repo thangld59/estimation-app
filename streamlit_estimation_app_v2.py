@@ -23,12 +23,42 @@ def extract_cable_size(text):
     match = re.search(r'\b\d{1,2}\s*[cx×]\s*\d{1,3}(\.\d+)?', text)
     return match.group(0).replace(" ", "") if match else ""
 
+def extract_voltage(text):
+    text = str(text).lower()
+    match = re.search(r'\b0[.,]?6[ /-]?1[.,]?0?k?[vV]?\b', text)
+    return "0.6/1kV" if match else ""
+
+def extract_material(text):
+    text = str(text).lower()
+    if "nhôm" in text or "al" in text or "aluminium" in text:
+        return "Al"
+    elif "cu" in text:
+        return "Cu"
+    return ""
+
+def extract_insulation(text):
+    text = str(text).lower()
+    for ins in ["xlpe", "pvc", "pe", "lszh"]:
+        if ins in text:
+            return ins.upper()
+    return ""
+
+def extract_shielding(text):
+    text = str(text).lower()
+    for shield in ["screen", "tape", "shield", "armored", "swa", "sta", "a"]:
+        if shield in text:
+            return True
+    return False
+
 def extract_conduit_size(text):
     text = str(text).lower()
-    match = re.search(r'\b(d|ø|phi)?\s*\d{1,3}(mm)?\b', text)
-    return match.group(0).replace(" ", "") if match else ""
+    matches = re.findall(r'\b(d|ø|phi)?\s*\d{1,3}(mm)?\b', text)
+    if matches:
+        sizes = ["".join(m).replace(" ", "") for m in matches]
+        return sizes[0]
+    return ""
 
-def get_category(text):
+def get_category_keywords(text):
     text = text.lower()
     if any(k in text for k in ["cáp", "cable", "dây điện", "wire"]):
         return "cable"
@@ -36,30 +66,33 @@ def get_category(text):
         return "conduit"
     return "other"
 
-def match_item(row, db):
-    category = get_category(row["combined"])
-    size = ""
+def match_row(row, db):
+    category = get_category_keywords(row["combined"])
     if category == "cable":
         size = extract_cable_size(row["combined"])
+        voltage = extract_voltage(row["combined"])
+        material = extract_material(row["combined"])
+        insulation = extract_insulation(row["combined"])
         db_filtered = db[db["category"] == "cable"].copy()
+        db_filtered["score"] = db_filtered["combined"].apply(lambda x: fuzz.token_set_ratio(row["combined"], x))
+        db_filtered = db_filtered[db_filtered["score"] >= 70]
+        if size:
+            db_filtered = db_filtered[db_filtered["combined"].str.contains(size, na=False)]
+        if not db_filtered.empty:
+            return db_filtered.loc[db_filtered["score"].idxmax()]
     elif category == "conduit":
         size = extract_conduit_size(row["combined"])
         db_filtered = db[db["category"] == "conduit"].copy()
-    else:
-        return None
-
-    if size:
-        db_filtered = db_filtered[db_filtered["size"] == size]
-
-    if not db_filtered.empty:
         db_filtered["score"] = db_filtered["combined"].apply(lambda x: fuzz.token_set_ratio(row["combined"], x))
         db_filtered = db_filtered[db_filtered["score"] >= 70]
+        if size:
+            db_filtered = db_filtered[db_filtered["combined"].str.contains(size, na=False)]
         if not db_filtered.empty:
             return db_filtered.loc[db_filtered["score"].idxmax()]
     return None
 
 # ------------------------------
-# App UI
+# App Logic
 # ------------------------------
 st.set_page_config(page_title="BuildWise", page_icon="📀", layout="wide")
 st.image("assets/logo.png", width=120)
@@ -73,7 +106,6 @@ if not username:
 user_folder = f"user_data/{username}"
 os.makedirs(user_folder, exist_ok=True)
 
-# Upload price list
 st.subheader(":file_folder: Upload Price List Files")
 uploaded_files = st.file_uploader("Upload one or more Excel files", type=["xlsx"], accept_multiple_files=True)
 if uploaded_files:
@@ -82,12 +114,10 @@ if uploaded_files:
             f.write(file.read())
     st.success(":white_check_mark: Price list uploaded successfully.")
 
-# File management
 st.subheader(":open_file_folder: Manage Price Lists")
 price_list_files = os.listdir(user_folder)
 selected_file = st.radio("Choose one file to match or use all", ["All files"] + price_list_files)
 
-# Upload estimation file
 st.subheader(":page_facing_up: Upload Estimation File")
 estimation_file = st.file_uploader("Upload estimation request (.xlsx)", type=["xlsx"], key="est")
 if estimation_file and price_list_files:
@@ -110,13 +140,16 @@ if estimation_file and price_list_files:
         db = pd.read_excel(os.path.join(user_folder, selected_file)).dropna(how="all")
 
     db_cols = db.columns.tolist()
+    if len(db_cols) < 6:
+        st.error("Price list file must have at least 6 columns.")
+        st.stop()
+
     db["combined"] = (db[db_cols[0]].fillna("") + " " + db[db_cols[1]].fillna("") + " " + db[db_cols[2]].fillna("")).apply(clean)
-    db["category"] = db["combined"].apply(get_category)
-    db["size"] = db["combined"].apply(lambda x: extract_cable_size(x) if get_category(x) == "cable" else extract_conduit_size(x))
+    db["category"] = db["combined"].apply(get_category_keywords)
 
     output_data = []
     for _, row in est.iterrows():
-        best = match_item(row, db)
+        best = match_row(row, db)
         unit = row[est_cols[3]]
         qty = row[est_cols[4]]
         if best is not None:
