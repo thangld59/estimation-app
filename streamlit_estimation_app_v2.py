@@ -15,13 +15,25 @@ def clean(text):
     text = text.replace("(", "").replace(")", "")
     text = text.replace("/", " ").replace(",", "")
     text = text.replace("-", " ")
+    text = re.sub(r"cáp|cable|dây điện|wire", "", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
 def extract_cable_size(text):
     text = str(text).lower()
-    match = re.search(r'\b\d{1,2}\s*[cx×]\s*\d{1,3}(\.\d+)?', text)
+    text = text.replace("mm2", "").replace("mm²", "")
+    text = re.sub(r"(\d)c", r"\1", text)
+    match = re.search(r'\b\d{1,2}\s*[x×]\s*\d{1,3}(\.\d+)?\b', text)
     return match.group(0).replace(" ", "") if match else ""
+
+def extract_conduit_size(text):
+    text = str(text).lower()
+    patterns = [r'\b(ø|phi)?\s*\d{1,3}(mm)?\b', r'\bD\s*\d{1,3}\b']
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return match.group(0).replace(" ", "")
+    return ""
 
 def extract_voltage(text):
     text = str(text).lower()
@@ -30,39 +42,34 @@ def extract_voltage(text):
 
 def extract_material(text):
     text = str(text).lower()
-    if "nhôm" in text or "al" in text or "aluminium" in text:
-        return "Al"
-    elif "cu" in text:
-        return "Cu"
+    if any(m in text for m in ["nhôm", "al", "aluminium"]): return "Al"
+    elif "cu" in text: return "Cu"
+    elif "thép" in text or "inox" in text or "galvanized" in text: return "Metal"
+    elif "hdpe" in text or "pvc" in text: return "Plastic"
     return ""
 
 def extract_insulation(text):
     text = str(text).lower()
     for ins in ["xlpe", "pvc", "pe", "lszh"]:
-        if ins in text:
-            return ins.upper()
+        if ins in text: return ins.upper()
     return ""
 
-def extract_conduit_size(text):
+def extract_type(text):
     text = str(text).lower()
-    match = re.search(r'\b(d|ø|phi)?\s*\d{1,3}(mm)?\b', text)
-    return match.group(0).replace(" ", "") if match else ""
+    for t in ["flexible", "ống mềm", "ống cứng"]:
+        if t in text: return t
+    return ""
 
 def get_category_keywords(text):
     text = text.lower()
-    if any(k in text for k in ["cáp", "cable", "dây điện", "wire"]):
-        return "cable"
-    if any(k in text for k in ["ống", "conduit", "ống luồn", "ống dây", "ống mềm", "flexible"]):
-        return "conduit"
+    if any(k in text for k in ["cáp", "cable", "dây điện", "wire"]): return "cable"
+    if any(k in text for k in ["ống", "conduit", "ống luồn", "ống dây", "ống mềm", "flexible"]): return "conduit"
     return "other"
 
 def match_row(row, db):
     category = get_category_keywords(row["combined"])
     if category == "cable":
         size = extract_cable_size(row["combined"])
-        voltage = extract_voltage(row["combined"])
-        material = extract_material(row["combined"])
-        insulation = extract_insulation(row["combined"])
         db_filtered = db[db["category"] == "cable"].copy()
         db_filtered["score"] = db_filtered["combined"].apply(lambda x: fuzz.token_set_ratio(row["combined"], x))
         db_filtered = db_filtered[db_filtered["score"] >= 70]
@@ -117,24 +124,24 @@ if estimation_file and price_list_files:
         st.error("Estimation file must have at least 5 columns.")
         st.stop()
 
-    est["combined"] = (est[est_cols[0]].fillna("") + " " + est[est_cols[1]].fillna("") + " " + est[est_cols[2]].fillna("")).apply(clean)
+    est["combined"] = (est[est_cols[0]].fillna('') + " " + est[est_cols[1]].fillna('') + " " + est[est_cols[2]].fillna('')).apply(clean)
 
     db_frames = []
     if selected_file == "All files":
         for f in price_list_files:
-            df = pd.read_excel(os.path.join(user_folder, f)).dropna(how="all")
+            df = pd.read_excel(os.path.join(user_folder, f)).dropna(how='all')
             df["source"] = f
             db_frames.append(df)
         db = pd.concat(db_frames, ignore_index=True)
     else:
-        db = pd.read_excel(os.path.join(user_folder, selected_file)).dropna(how="all")
+        db = pd.read_excel(os.path.join(user_folder, selected_file)).dropna(how='all')
 
     db_cols = db.columns.tolist()
     if len(db_cols) < 6:
         st.error("Price list file must have at least 6 columns.")
         st.stop()
 
-    db["combined"] = (db[db_cols[0]].fillna("") + " " + db[db_cols[1]].fillna("") + " " + db[db_cols[2]].fillna("")).apply(clean)
+    db["combined"] = (db[db_cols[0]].fillna('') + " " + db[db_cols[1]].fillna('') + " " + db[db_cols[2]].fillna('')).apply(clean)
     db["category"] = db["combined"].apply(get_category_keywords)
 
     output_data = []
