@@ -5,9 +5,6 @@ import re
 from io import BytesIO
 from rapidfuzz import fuzz
 
-# ------------------------------
-# Utility Functions
-# ------------------------------
 def clean(text):
     text = str(text).lower()
     text = re.sub(r"0[,.]?6kv|1[,.]?0kv", "", text)
@@ -28,33 +25,6 @@ def extract_conduit_size(text):
     match = re.search(r'\b(d|ø|phi)?\s*\d{1,3}(mm)?\b', text)
     return match.group(0).replace(" ", "") if match else ""
 
-def extract_voltage(text):
-    text = str(text).lower()
-    match = re.search(r'\b0[.,]?6[ /-]?1[.,]?0?k?[vV]?\b', text)
-    return "0.6/1kV" if match else ""
-
-def extract_material(text):
-    text = str(text).lower()
-    if "nhôm" in text or "al" in text or "aluminium" in text:
-        return "Al"
-    elif "cu" in text:
-        return "Cu"
-    return ""
-
-def extract_insulation(text):
-    text = str(text).lower()
-    for ins in ["xlpe", "pvc", "pe", "lszh"]:
-        if ins in text:
-            return ins.upper()
-    return ""
-
-def extract_shielding(text):
-    text = str(text).lower()
-    for shield in ["screen", "tape", "shield", "armored", "swa", "sta", "a"]:
-        if shield in text:
-            return True
-    return False
-
 def get_category_keywords(text):
     text = text.lower()
     if any(k in text for k in ["cáp", "cable", "dây điện", "wire"]):
@@ -64,7 +34,7 @@ def get_category_keywords(text):
     return "other"
 
 def match_row(row, db):
-    category = get_category_keywords(row["combined"])
+    category = row["category"]
     if category == "cable":
         size = extract_cable_size(row["combined"])
         db_filtered = db[db["category"] == "cable"].copy()
@@ -85,9 +55,7 @@ def match_row(row, db):
             return db_filtered.loc[db_filtered["score"].idxmax()]
     return None
 
-# ------------------------------
-# App UI
-# ------------------------------
+# Streamlit Interface
 st.set_page_config(page_title="BuildWise", page_icon="📀", layout="wide")
 st.image("assets/logo.png", width=120)
 st.title(":triangular_ruler: BuildWise - Smart Estimation Tool")
@@ -115,12 +83,14 @@ selected_file = st.radio("Choose one file to match or use all", ["All files"] + 
 st.subheader(":page_facing_up: Upload Estimation File")
 estimation_file = st.file_uploader("Upload estimation request (.xlsx)", type=["xlsx"], key="est")
 if estimation_file and price_list_files:
-    est = pd.read_excel(estimation_file).dropna(how='all')
+    est = pd.read_excel(estimation_file).dropna(how="all")
     est_cols = est.columns.tolist()
     if len(est_cols) < 5:
         st.error("Estimation file must have at least 5 columns.")
         st.stop()
+
     est["combined"] = (est[est_cols[0]].fillna("") + " " + est[est_cols[1]].fillna("") + " " + est[est_cols[2]].fillna("")).apply(clean)
+    est["category"] = est["combined"].apply(get_category_keywords)
 
     db_frames = []
     if selected_file == "All files":
@@ -136,6 +106,7 @@ if estimation_file and price_list_files:
     if len(db_cols) < 6:
         st.error("Price list file must have at least 6 columns.")
         st.stop()
+
     db["combined"] = (db[db_cols[0]].fillna("") + " " + db[db_cols[1]].fillna("") + " " + db[db_cols[2]].fillna("")).apply(clean)
     db["category"] = db["combined"].apply(get_category_keywords)
 
