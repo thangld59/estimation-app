@@ -50,7 +50,7 @@ def match_row(row, db, cable_threshold, conduit_threshold):
         db_filtered["score"] = db_filtered["combined"].apply(lambda x: fuzz.token_set_ratio(row["combined"], x))
       #  best2 = db_filtered.loc[db_filtered["score"].idxmax()]
       #  db_filtered = db_filtered[db_filtered["score"] >= cable_threshold]
-       db_filtered = db_filtered[db_filtered["score"] >= 1]
+        db_filtered = db_filtered[db_filtered["score"] >= 1]
         if size:
             db_filtered = db_filtered[db_filtered["combined"].str.contains(size, na=False)]
         if not db_filtered.empty:
