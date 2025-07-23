@@ -47,16 +47,17 @@ def match_row(row, db, cable_threshold, conduit_threshold):
             db_filtered = db_filtered[db_filtered["combined"].str.contains(size, na=False)]
         if not db_filtered.empty:
             return db_filtered.loc[db_filtered["score"].idxmax()]
-    elif category == "conduit":
-        size = extract_conduit_size(row["combined"])
-        db_filtered = db[db["category"] == "conduit"].copy()
-        db_filtered["score"] = db_filtered["combined"].apply(lambda x: fuzz.token_set_ratio(row["combined"], x))
-        db_filtered = db_filtered[db_filtered["score"] >= conduit_threshold]
-        if size:
-            db_filtered = db_filtered[db_filtered["combined"].str.contains(size, na=False)]
-        if not db_filtered.empty:
-            return db_filtered.loc[db_filtered["score"].idxmax()]
+#    elif category == "conduit":
+         # size = extract_conduit_size(row["combined"])
+        # db_filtered = db[db["category"] == "conduit"].copy()
+        # db_filtered["score"] = db_filtered["combined"].apply(lambda x: fuzz.token_set_ratio(row["combined"], x))
+        # db_filtered = db_filtered[db_filtered["score"] >= conduit_threshold]
+        # if size:
+            # db_filtered = db_filtered[db_filtered["combined"].str.contains(size, na=False)]
+        # if not db_filtered.empty:
+            # return db_filtered.loc[db_filtered["score"].idxmax()]
     return None
+
 
 # ------------------------------
 # App Logic
