@@ -42,6 +42,7 @@ def get_category_keywords(text):
 
 def match_row(row, db, cable_threshold, conduit_threshold):
     category = get_category_keywords(row["combined"])
+    best = None
     if category == "cable":
         size = extract_cable_size(row["combined"])
         db_filtered = db[db["category"] == "cable"].copy()
