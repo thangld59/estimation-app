@@ -1,6 +1,3 @@
-# ✅ BuildWise Estimation Tool with working cable and conduit matching logic
-# Final integrated version for Streamlit
-
 import streamlit as st
 import pandas as pd
 import os
@@ -8,6 +5,9 @@ import re
 from io import BytesIO
 from rapidfuzz import fuzz
 
+# ------------------------------
+# Utility Functions
+# ------------------------------
 def clean(text):
     text = str(text).lower()
     text = re.sub(r"0[,.]?6kv|1[,.]?0kv", "", text)
@@ -28,26 +28,6 @@ def extract_conduit_size(text):
     match = re.search(r'\b(d|ø|phi)?\s*\d{1,3}(mm)?\b', text)
     return match.group(0).replace(" ", "") if match else ""
 
-def extract_voltage(text):
-    text = str(text).lower()
-    match = re.search(r'\b0[.,]?6[ /-]?1[.,]?0?k?[vV]?\b', text)
-    return "0.6/1kV" if match else ""
-
-def extract_material(text):
-    text = str(text).lower()
-    if "nhôm" in text or "al" in text or "aluminium" in text:
-        return "Al"
-    elif "cu" in text:
-        return "Cu"
-    return ""
-
-def extract_insulation(text):
-    text = str(text).lower()
-    for ins in ["xlpe", "pvc", "pe", "lszh"]:
-        if ins in text:
-            return ins.upper()
-    return ""
-
 def get_category_keywords(text):
     text = text.lower()
     if any(k in text for k in ["cáp", "cable", "dây điện", "wire"]):
@@ -56,34 +36,39 @@ def get_category_keywords(text):
         return "conduit"
     return "other"
 
-def match_row(row, db):
+def match_row(row, db, cable_threshold, conduit_threshold):
     category = get_category_keywords(row["combined"])
     if category == "cable":
         size = extract_cable_size(row["combined"])
-        voltage = extract_voltage(row["combined"])
-        material = extract_material(row["combined"])
-        insulation = extract_insulation(row["combined"])
         db_filtered = db[db["category"] == "cable"].copy()
         db_filtered["score"] = db_filtered["combined"].apply(lambda x: fuzz.token_set_ratio(row["combined"], x))
-        db_filtered = db_filtered[db_filtered["score"] >= 70]
+        db_filtered = db_filtered[db_filtered["score"] >= cable_threshold]
         if size:
             db_filtered = db_filtered[db_filtered["combined"].str.contains(size, na=False)]
         if not db_filtered.empty:
             return db_filtered.loc[db_filtered["score"].idxmax()]
-    if category == "conduit":
+    elif category == "conduit":
         size = extract_conduit_size(row["combined"])
         db_filtered = db[db["category"] == "conduit"].copy()
         db_filtered["score"] = db_filtered["combined"].apply(lambda x: fuzz.token_set_ratio(row["combined"], x))
-        db_filtered = db_filtered[db_filtered["score"] >= 70]
+        db_filtered = db_filtered[db_filtered["score"] >= conduit_threshold]
         if size:
             db_filtered = db_filtered[db_filtered["combined"].str.contains(size, na=False)]
         if not db_filtered.empty:
             return db_filtered.loc[db_filtered["score"].idxmax()]
     return None
 
+# ------------------------------
+# App Logic
+# ------------------------------
 st.set_page_config(page_title="BuildWise", page_icon="📀", layout="wide")
 st.image("assets/logo.png", width=120)
 st.title(":triangular_ruler: BuildWise - Smart Estimation Tool")
+
+# Sidebar threshold control
+st.sidebar.header("Matching Thresholds")
+cable_threshold = st.sidebar.slider("Cable Threshold", 0, 100, 75)
+conduit_threshold = st.sidebar.slider("Conduit Threshold", 0, 100, 75)
 
 username = st.sidebar.text_input("Username")
 if not username:
@@ -136,7 +121,7 @@ if estimation_file and price_list_files:
 
     output_data = []
     for _, row in est.iterrows():
-        best = match_row(row, db)
+        best = match_row(row, db, cable_threshold, conduit_threshold)
         unit = row[est_cols[3]]
         qty = row[est_cols[4]]
         if best is not None:
