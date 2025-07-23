@@ -28,7 +28,7 @@ def extract_cable_size(text):
     return match.group(0).replace(" ", "") if match else ""
 
 def extract_conduit_size(text):
-     text = str(text).lower()
+    text = str(text).lower()
     match = re.search(r'\b(d|ø|phi)?\s*\d{1,3}(mm)?\b', text)
     return match.group(0).replace(" ", "") if match else ""
 
