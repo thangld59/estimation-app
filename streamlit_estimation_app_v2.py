@@ -20,9 +20,7 @@ def clean(text):
     return text
 
 def extract_cable_size(text):
-    # text = str(text).lower()
-    # match = re.search(r'\b\d{1,2}\s*[cx×]\s*\d{1,3}(\.\d+)?', text)
-    # return match.group(0).replace(" ", "") if match else ""
+
     text = str(text).lower()
     text = text.replace("mm2", "").replace("mm²", "")
     text = re.sub(r"(\d)c", r"\1", text)  # convert 4C -> 4
