@@ -1,3 +1,6 @@
+# ✅ BuildWise Estimation Tool with working cable and conduit matching logic
+# Final integrated version for Streamlit
+
 import streamlit as st
 import pandas as pd
 import os
@@ -5,9 +8,6 @@ import re
 from io import BytesIO
 from rapidfuzz import fuzz
 
-# ------------------------------
-# Utility Functions
-# ------------------------------
 def clean(text):
     text = str(text).lower()
     text = re.sub(r"0[,.]?6kv|1[,.]?0kv", "", text)
@@ -21,6 +21,11 @@ def clean(text):
 def extract_cable_size(text):
     text = str(text).lower()
     match = re.search(r'\b\d{1,2}\s*[cx×]\s*\d{1,3}(\.\d+)?', text)
+    return match.group(0).replace(" ", "") if match else ""
+
+def extract_conduit_size(text):
+    text = str(text).lower()
+    match = re.search(r'\b(d|ø|phi)?\s*\d{1,3}(mm)?\b', text)
     return match.group(0).replace(" ", "") if match else ""
 
 def extract_voltage(text):
@@ -41,21 +46,6 @@ def extract_insulation(text):
     for ins in ["xlpe", "pvc", "pe", "lszh"]:
         if ins in text:
             return ins.upper()
-    return ""
-
-def extract_shielding(text):
-    text = str(text).lower()
-    for shield in ["screen", "tape", "shield", "armored", "swa", "sta", "a"]:
-        if shield in text:
-            return True
-    return False
-
-def extract_conduit_size(text):
-    text = str(text).lower()
-    matches = re.findall(r'\b(d|ø|phi)?\s*\d{1,3}(mm)?\b', text)
-    if matches:
-        sizes = ["".join(m).replace(" ", "") for m in matches]
-        return sizes[0]
     return ""
 
 def get_category_keywords(text):
@@ -91,9 +81,6 @@ def match_row(row, db):
             return db_filtered.loc[db_filtered["score"].idxmax()]
     return None
 
-# ------------------------------
-# App Logic
-# ------------------------------
 st.set_page_config(page_title="BuildWise", page_icon="📀", layout="wide")
 st.image("assets/logo.png", width=120)
 st.title(":triangular_ruler: BuildWise - Smart Estimation Tool")
