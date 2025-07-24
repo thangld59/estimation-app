@@ -20,11 +20,8 @@ def clean(text):
     return text
 
 def extract_cable_size(text):
-
     text = str(text).lower()
-    text = text.replace("mm2", "").replace("mm²", "")
-    text = re.sub(r"(\d)c", r"\1", text)  # convert 4C -> 4
-    match = re.search(r'\b\d{1,2}\s*[x×]\s*\d{1,3}\b', text)
+    match = re.search(r'\b\d{1,2}\s*[cx×]\s*\d{1,3}(\.\d+)?', text)
     return match.group(0).replace(" ", "") if match else ""
 
 def extract_conduit_size(text):
@@ -42,19 +39,14 @@ def get_category_keywords(text):
 
 def match_row(row, db, cable_threshold, conduit_threshold):
     category = get_category_keywords(row["combined"])
-    best = None
-    best2 = None
     if category == "cable":
         size = extract_cable_size(row["combined"])
         db_filtered = db[db["category"] == "cable"].copy()
         db_filtered["score"] = db_filtered["combined"].apply(lambda x: fuzz.token_set_ratio(row["combined"], x))
-      #  best2 = db_filtered.loc[db_filtered["score"].idxmax()]
-      #  db_filtered = db_filtered[db_filtered["score"] >= cable_threshold]
-        db_filtered = db_filtered[db_filtered["score"] >= 1]
+        db_filtered = db_filtered[db_filtered["score"] >= cable_threshold]
         if size:
             db_filtered = db_filtered[db_filtered["combined"].str.contains(size, na=False)]
         if not db_filtered.empty:
-   # if best2 is not None:
             return db_filtered.loc[db_filtered["score"].idxmax()]
     elif category == "conduit":
         size = extract_conduit_size(row["combined"])
