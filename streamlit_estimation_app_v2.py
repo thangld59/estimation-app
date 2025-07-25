@@ -28,6 +28,7 @@ def extract_conduit_size(text):
     text = str(text).lower()
     match = re.search(r'\b(d|ø|phi)?\s*\d{1,3}(mm)?\b', text)
     return match.group(0).replace(" ", "") if match else ""
+
 def get_category_keywords(text):
     text = text.lower()
     if any(k in text for k in ["cáp", "cable", "dây điện", "wire"]):
@@ -35,8 +36,9 @@ def get_category_keywords(text):
     if any(k in text for k in ["ống", "conduit", "ống luồn", "ống dây", "ống mềm", "flexible"]):
         return "conduit"
     return "other"
+
 def match_row(row, db, cable_threshold, conduit_threshold):
-      category = get_category_keywords(row["combined"])
+    category = get_category_keywords(row["combined"])
     if category == "cable":
         size = extract_cable_size(row["combined"])
         db_filtered = db[db["category"] == "cable"].copy()
