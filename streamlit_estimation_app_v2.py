@@ -46,7 +46,7 @@ def match_row(row, db, cable_threshold, conduit_threshold):
         size = extract_cable_size(row["combined"])
         db_filtered = db[db["category"] == "cable"].copy()
         db_filtered["score"] = db_filtered["combined"].apply(lambda x: fuzz.token_set_ratio(row["combined"], x))
-        db_filtered = db_filtered[db_filtered["score"] >= cable_threshold]
+        db_filtered = db_filtered[db_filtered["score"] >= 50]
         if size:
             db_filtered = db_filtered[db_filtered["combined"].str.contains(size, na=False)]
         if not db_filtered.empty:
