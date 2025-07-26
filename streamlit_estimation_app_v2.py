@@ -16,6 +16,7 @@ def clean(text):
     text = text.replace("(", "").replace(")", "")
     text = text.replace("/", " ").replace(",", "")
     text = text.replace("-", " ")
+    text = text.replace("cáp", "").replace("cable", "").replace("dây", "")
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
