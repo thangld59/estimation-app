@@ -22,8 +22,8 @@ def clean(text):
 def extract_size(text):
     text = str(text).lower()
     text = text.replace("mm2", "").replace("mm²", "")
-    text = re.sub(r"(\d)c", r"", text)  # convert 4C -> 4
-    match = re.search(r'\d{1,2}\s*[x×]\s*\d{1,3}', text)
+    text = re.sub(r"(\d)c", r"\1", text)  # convert 4C -> 4
+    match = re.search(r'\b\d{1,2}\s*[x×]\s*\d{1,3}\b', text)
     return match.group(0).replace(" ", "") if match else ""
 
 # ------------------------------
@@ -42,24 +42,6 @@ user_folder = f"user_data/{username}"
 os.makedirs(user_folder, exist_ok=True)
 
 # ------------------------------
-# Price List and Estimation Request Form (Always Shown)
-# ------------------------------
-st.subheader(":page_with_curl: Price List and Estimation Request Form (Mẫu Bảng Giá và Mẫu Yêu Cầu Vào Giá)")
-admin_folder = "user_data/Admin123"
-os.makedirs(admin_folder, exist_ok=True)
-form_files = os.listdir(admin_folder)
-if form_files:
-    for file in form_files:
-        st.markdown(f"📄 [{file}](./{admin_folder}/{file})")
-
-if username == "Admin123":
-    form_upload = st.file_uploader("Upload new form (Admin only)", type=["pdf", "xlsx", "xls"], key="form_upload")
-    if form_upload:
-        with open(os.path.join(admin_folder, form_upload.name), "wb") as f:
-            f.write(form_upload.read())
-        st.success("Form uploaded successfully.")
-
-# ------------------------------
 # Upload Price List Files
 # ------------------------------
 st.subheader(":file_folder: Upload Price List Files")
@@ -75,14 +57,18 @@ if uploaded_files:
 # ------------------------------
 st.subheader(":open_file_folder: Manage Price Lists")
 price_list_files = os.listdir(user_folder)
-file_to_delete = st.selectbox("Select a file to delete", ["None"] + price_list_files)
-if file_to_delete != "None":
-    if st.button("Delete selected file"):
-        os.remove(os.path.join(user_folder, file_to_delete))
-        st.success(f"Deleted {file_to_delete}")
-        st.experimental_rerun()
-
 selected_file = st.radio("Choose one file to match or use all", ["All files"] + price_list_files)
+
+# Allow deletion of uploaded price list files
+file_to_delete = st.selectbox("Select a file to delete", [""] + price_list_files)
+if file_to_delete:
+    if st.button("Delete Selected File"):
+        try:
+            os.remove(os.path.join(user_folder, file_to_delete))
+            st.success(f"Deleted file: {file_to_delete}")
+            st.experimental_rerun()
+        except Exception as e:
+            st.error(f"Error deleting file: {e}")
 
 # ------------------------------
 # Upload Estimation File
@@ -147,8 +133,17 @@ if estimation_file and price_list_files:
         total = amt_mat + amt_lab
 
         output_data.append([
-            row[est_cols[0]], row[est_cols[1]], desc_proposed, row[est_cols[2]], unit, qty,
-            m_cost, l_cost, amt_mat, amt_lab, total
+            row[est_cols[0]],  # Model
+            row[est_cols[1]],  # Description (requested)
+            desc_proposed,     # Description (proposed)
+            row[est_cols[2]],  # Specification
+            unit,              # Unit
+            qty,               # Quantity
+            m_cost,            # Material Cost
+            l_cost,            # Labour Cost
+            amt_mat,           # Amount Material
+            amt_lab,           # Amount Labour
+            total              # Total
         ])
 
     result_df = pd.DataFrame(output_data, columns=[
@@ -180,4 +175,4 @@ if estimation_file and price_list_files:
         if not unmatched_df.empty:
             unmatched_df.to_excel(writer, index=False, sheet_name="Unmatched Items")
 
-    st.download_button("📥 Download Cleaned Estimation File", buffer.getvalue(), file_name="Estimation_Result_BuildWise.xlsx")
+    st.download_button("\U0001F4E5 Download Cleaned Estimation File", buffer.getvalue(), file_name="Estimation_Result_BuildWise.xlsx")
