@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import os
@@ -22,7 +23,7 @@ def clean(text):
 def extract_size(text):
     text = str(text).lower()
     text = text.replace("mm2", "").replace("mm²", "")
-    text = re.sub(r"(\d)c", r"\1", text)
+    text = re.sub(r"(\d)c", r"\1", text)  # convert 4C -> 4
     match = re.search(r'\b\d{1,2}\s*[x×]\s*\d{1,3}\b', text)
     return match.group(0).replace(" ", "") if match else ""
 
@@ -39,27 +40,29 @@ if not username:
     st.stop()
 
 user_folder = f"user_data/{username}"
+form_folder = "shared_forms"
 os.makedirs(user_folder, exist_ok=True)
+os.makedirs(form_folder, exist_ok=True)
 
 # ------------------------------
-# Admin Upload Static Form
+# Admin Upload Shared Form
 # ------------------------------
-st.subheader(":inbox_tray: Price List and Estimation Request Form (Mẫu Bảng Giá và Mẫu Yêu Cầu Vào Giá)")
-static_folder = "static_forms"
-os.makedirs(static_folder, exist_ok=True)
-
 if username == "Admin123":
-    form_files = st.file_uploader("Upload form files", type=["xlsx", "xls", "pdf"], accept_multiple_files=True, key="form")
-    if form_files:
-        for file in form_files:
-            with open(os.path.join(static_folder, file.name), "wb") as f:
-                f.write(file.read())
-        st.success("✅ Form file(s) uploaded successfully.")
+    st.subheader(":bookmark_tabs: Price List and Estimation Request Form (Mẫu Bảng Giá và Mẫu Yêu Cầu Vào Giá)")
+    form_file = st.file_uploader("Admin Upload Form File", type=["xlsx"], key="adminform")
+    if form_file:
+        with open(os.path.join(form_folder, form_file.name), "wb") as f:
+            f.write(form_file.read())
+        st.success("Form file uploaded successfully.")
 
-static_files = os.listdir(static_folder)
-if static_files:
-    for fname in static_files:
-        st.markdown(f"📄 {fname}")
+# ------------------------------
+# Show Form Folder for All Users
+# ------------------------------
+st.subheader(":bookmark_tabs: Price List and Estimation Request Form (Mẫu Bảng Giá và Mẫu Yêu Cầu Vào Giá)")
+form_files = os.listdir(form_folder)
+if form_files:
+    for file in form_files:
+        st.markdown(f"📄 {file}")
 
 # ------------------------------
 # Upload Price List Files
@@ -77,14 +80,18 @@ if uploaded_files:
 # ------------------------------
 st.subheader(":open_file_folder: Manage Price Lists")
 price_list_files = os.listdir(user_folder)
-for file in price_list_files:
-    col1, col2 = st.columns([6, 1])
-    col1.write(file)
-    if col2.button("❌", key=file):
-        os.remove(os.path.join(user_folder, file))
-        st.experimental_rerun()
-
 selected_file = st.radio("Choose one file to match or use all", ["All files"] + price_list_files)
+
+# Allow deletion of uploaded price list files
+file_to_delete = st.selectbox("Select a file to delete", [""] + price_list_files)
+if file_to_delete:
+    if st.button("Delete Selected File"):
+        try:
+            os.remove(os.path.join(user_folder, file_to_delete))
+            st.success(f"Deleted file: {file_to_delete}")
+            st.experimental_rerun()
+        except Exception as e:
+            st.error(f"Error deleting file: {e}")
 
 # ------------------------------
 # Upload Estimation File
@@ -120,7 +127,7 @@ if estimation_file and price_list_files:
     db["size"] = (db[db_cols[0]].fillna('') + " " + db[db_cols[1]].fillna('') + " " + db[db_cols[2]].fillna('')).apply(extract_size)
 
     output_data = []
-    for _, row in est.iterrows():
+    for i, row in est.iterrows():
         query = row["combined"]
         query_size = row["size"]
         unit = row[est_cols[3]]
@@ -149,27 +156,24 @@ if estimation_file and price_list_files:
         total = amt_mat + amt_lab
 
         output_data.append([
-            row[est_cols[0]], row[est_cols[1]], desc_proposed, row[est_cols[2]],
-            unit, qty, m_cost, l_cost, amt_mat, amt_lab, total
+            row[est_cols[0]], row[est_cols[1]], desc_proposed, row[est_cols[2]], unit, qty,
+            m_cost, l_cost, amt_mat, amt_lab, total
         ])
 
     result_df = pd.DataFrame(output_data, columns=[
         "Model", "Description (requested)", "Description (proposed)", "Specification", "Unit", "Quantity",
         "Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"
     ])
+
     grand_total = pd.to_numeric(result_df["Total"], errors="coerce").sum()
     grand_row = pd.DataFrame([[''] * 10 + [grand_total]], columns=result_df.columns)
     result_final = pd.concat([result_df, grand_row], ignore_index=True)
 
     st.subheader(":mag: Matched Estimation")
-    display_df = result_final.copy()
-    display_df["Quantity"] = pd.to_numeric(display_df["Quantity"], errors="coerce").fillna(0).astype(int).map("{:,}".format)
-    for col in ["Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"]:
-        display_df[col] = pd.to_numeric(display_df[col], errors="coerce").fillna(0).astype(int).map("{:,}".format)
-    st.dataframe(display_df)
+    st.dataframe(result_final)
 
-    st.subheader(":x: Unmatched Rows")
     unmatched_df = result_df[result_df["Description (proposed)"] == ""]
+    st.subheader(":x: Unmatched Rows")
     if not unmatched_df.empty:
         st.dataframe(unmatched_df)
     else:
