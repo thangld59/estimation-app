@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import os
@@ -40,29 +39,31 @@ if not username:
     st.stop()
 
 user_folder = f"user_data/{username}"
-form_folder = "shared_forms"
 os.makedirs(user_folder, exist_ok=True)
-os.makedirs(form_folder, exist_ok=True)
+
+shared_folder = "shared_forms"
+os.makedirs(shared_folder, exist_ok=True)
 
 # ------------------------------
-# Admin Upload Shared Form
-# ------------------------------
-if username == "Admin123":
-    st.subheader(":bookmark_tabs: Price List and Estimation Request Form (Mẫu Bảng Giá và Mẫu Yêu Cầu Vào Giá)")
-    form_file = st.file_uploader("Admin Upload Form File", type=["xlsx"], key="adminform")
-    if form_file:
-        with open(os.path.join(form_folder, form_file.name), "wb") as f:
-            f.write(form_file.read())
-        st.success("Form file uploaded successfully.")
-
-# ------------------------------
-# Show Form Folder for All Users
+# Shared Forms (Admin Upload)
 # ------------------------------
 st.subheader(":bookmark_tabs: Price List and Estimation Request Form (Mẫu Bảng Giá và Mẫu Yêu Cầu Vào Giá)")
-form_files = os.listdir(form_folder)
-if form_files:
-    for file in form_files:
-        st.markdown(f"📄 {file}")
+shared_files = os.listdir(shared_folder)
+if shared_files:
+    st.write("Available shared forms:")
+    for file in shared_files:
+        st.markdown(f"- {file}")
+else:
+    st.info("No shared forms uploaded yet.")
+
+if username == "Admin123":
+    st.markdown("**Admin Upload Area**")
+    admin_file = st.file_uploader("Upload form to share", type=["xlsx"], key="admin_form")
+    if admin_file:
+        with open(os.path.join(shared_folder, admin_file.name), "wb") as f:
+            f.write(admin_file.read())
+        st.success("Form uploaded to shared folder successfully.")
+        st.experimental_rerun()
 
 # ------------------------------
 # Upload Price List Files
@@ -82,7 +83,6 @@ st.subheader(":open_file_folder: Manage Price Lists")
 price_list_files = os.listdir(user_folder)
 selected_file = st.radio("Choose one file to match or use all", ["All files"] + price_list_files)
 
-# Allow deletion of uploaded price list files
 file_to_delete = st.selectbox("Select a file to delete", [""] + price_list_files)
 if file_to_delete:
     if st.button("Delete Selected File"):
@@ -156,8 +156,17 @@ if estimation_file and price_list_files:
         total = amt_mat + amt_lab
 
         output_data.append([
-            row[est_cols[0]], row[est_cols[1]], desc_proposed, row[est_cols[2]], unit, qty,
-            m_cost, l_cost, amt_mat, amt_lab, total
+            row[est_cols[0]],  # Model
+            row[est_cols[1]],  # Description (requested)
+            desc_proposed,     # Description (proposed)
+            row[est_cols[2]],  # Specification
+            unit,              # Unit
+            qty,               # Quantity
+            m_cost,            # Material Cost
+            l_cost,            # Labour Cost
+            amt_mat,           # Amount Material
+            amt_lab,           # Amount Labour
+            total              # Total
         ])
 
     result_df = pd.DataFrame(output_data, columns=[
@@ -170,10 +179,14 @@ if estimation_file and price_list_files:
     result_final = pd.concat([result_df, grand_row], ignore_index=True)
 
     st.subheader(":mag: Matched Estimation")
-    st.dataframe(result_final)
+    display_df = result_final.copy()
+    display_df["Quantity"] = pd.to_numeric(display_df["Quantity"], errors="coerce").fillna(0).astype(int).map("{:,}".format)
+    for col in ["Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"]:
+        display_df[col] = pd.to_numeric(display_df[col], errors="coerce").fillna(0).astype(int).map("{:,}".format)
+    st.dataframe(display_df)
 
-    unmatched_df = result_df[result_df["Description (proposed)"] == ""]
     st.subheader(":x: Unmatched Rows")
+    unmatched_df = result_df[result_df["Description (proposed)"] == ""]
     if not unmatched_df.empty:
         st.dataframe(unmatched_df)
     else:
@@ -184,4 +197,5 @@ if estimation_file and price_list_files:
         result_final.to_excel(writer, index=False, sheet_name="Matched Results")
         if not unmatched_df.empty:
             unmatched_df.to_excel(writer, index=False, sheet_name="Unmatched Items")
-    st.download_button("📥 Download Cleaned Estimation File", buffer.getvalue(), file_name="Estimation_Result_BuildWise.xlsx")
+
+    st.download_button("\U0001F4E5 Download Cleaned Estimation File", buffer.getvalue(), file_name="Estimation_Result_BuildWise.xlsx")
