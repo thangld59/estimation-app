@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import os
@@ -40,35 +39,35 @@ if not username:
     st.stop()
 
 user_folder = f"user_data/{username}"
+form_folder = "shared_forms"
 os.makedirs(user_folder, exist_ok=True)
+os.makedirs(form_folder, exist_ok=True)
 
 # ------------------------------
-# Admin Upload Section
+# Shared Forms Section (for all users)
 # ------------------------------
-st.subheader(":inbox_tray: Price List and Estimation Request Form (Mẫu Bảng Giá và Mẫu Yêu Cầu Vào Giá)")
-shared_folder = "shared_forms"
-os.makedirs(shared_folder, exist_ok=True)
-shared_files = os.listdir(shared_folder)
-for f in shared_files:
-    st.markdown(f"- {f}")
-
+st.subheader(":scroll: Price List and Estimation Request Form (Mẫu Bảng Giá và Mẫu Yêu Cầu Vào Giá)")
+form_files = os.listdir(form_folder)
 if username == "Admin123":
-    form_files = st.file_uploader("Admin Only: Upload shared forms", type=["xlsx"], accept_multiple_files=True, key="admin_form")
-    if form_files:
-        for file in form_files:
-            with open(os.path.join(shared_folder, file.name), "wb") as f:
-                f.write(file.read())
-        st.success(":white_check_mark: Forms uploaded to shared folder.")
+    form_uploads = st.file_uploader("Upload form files", type=["xlsx", "xls"], accept_multiple_files=True, key="form_upload")
+    if form_uploads:
+        for f in form_uploads:
+            with open(os.path.join(form_folder, f.name), "wb") as out_file:
+                out_file.write(f.read())
+        st.success("Form file(s) uploaded successfully.")
 
-    file_to_delete = st.selectbox("Admin Only: Select a shared form to delete", [""] + shared_files)
-    if file_to_delete:
-        if st.button("Delete Selected Shared Form"):
-            try:
-                os.remove(os.path.join(shared_folder, file_to_delete))
-                st.success(f"Deleted shared form: {file_to_delete}")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error deleting file: {e}")
+    form_to_delete = st.selectbox("Select a form file to delete", [""] + form_files, key="form_delete")
+    if form_to_delete and st.button("Delete Selected Form File"):
+        try:
+            os.remove(os.path.join(form_folder, form_to_delete))
+            st.success(f"Deleted form file: {form_to_delete}")
+            st.experimental_rerun()
+        except Exception as e:
+            st.error(f"Error deleting form file: {e}")
+else:
+    for file in form_files:
+        with open(os.path.join(form_folder, file), "rb") as f:
+            st.download_button(f"📄 Download {file}", f.read(), file_name=file)
 
 # ------------------------------
 # Upload Price List Files
@@ -88,13 +87,14 @@ st.subheader(":open_file_folder: Manage Price Lists")
 price_list_files = os.listdir(user_folder)
 selected_file = st.radio("Choose one file to match or use all", ["All files"] + price_list_files)
 
-file_to_delete = st.selectbox("Select a price list file to delete", [""] + price_list_files, key="delete_price")
+# Allow deletion of uploaded price list files
+file_to_delete = st.selectbox("Select a file to delete", [""] + price_list_files)
 if file_to_delete:
-    if st.button("Delete Selected Price List"):
+    if st.button("Delete Selected File"):
         try:
             os.remove(os.path.join(user_folder, file_to_delete))
-            st.success(f"Deleted price list: {file_to_delete}")
-            st.rerun()
+            st.success(f"Deleted file: {file_to_delete}")
+            st.experimental_rerun()
         except Exception as e:
             st.error(f"Error deleting file: {e}")
 
@@ -203,4 +203,4 @@ if estimation_file and price_list_files:
         if not unmatched_df.empty:
             unmatched_df.to_excel(writer, index=False, sheet_name="Unmatched Items")
 
-    st.download_button("📥 Download Cleaned Estimation File", buffer.getvalue(), file_name="Estimation_Result_BuildWise.xlsx")
+    st.download_button("\U0001F4E5 Download Cleaned Estimation File", buffer.getvalue(), file_name="Estimation_Result_BuildWise.xlsx")
