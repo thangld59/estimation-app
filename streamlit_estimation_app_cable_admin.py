@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import os
@@ -39,37 +40,41 @@ if not username:
     st.stop()
 
 user_folder = f"user_data/{username}"
-shared_form_folder = "forms_shared"
 os.makedirs(user_folder, exist_ok=True)
-os.makedirs(shared_form_folder, exist_ok=True)
 
 # ------------------------------
-# Admin Upload for Shared Forms
+# Admin Upload Section
 # ------------------------------
 st.subheader(":inbox_tray: Price List and Estimation Request Form (Mẫu Bảng Giá và Mẫu Yêu Cầu Vào Giá)")
-st.markdown("These are the shared forms available to all users:")
-
-shared_files = os.listdir(shared_form_folder)
-if shared_files:
-    for f in shared_files:
-        st.markdown(f"- {f}")
-else:
-    st.info("No shared forms uploaded yet.")
+shared_folder = "shared_forms"
+os.makedirs(shared_folder, exist_ok=True)
+shared_files = os.listdir(shared_folder)
+for f in shared_files:
+    st.markdown(f"- {f}")
 
 if username == "Admin123":
-    form_uploads = st.file_uploader("Admin: Upload shared form files", type=["xlsx"], accept_multiple_files=True, key="admin_upload")
-    if form_uploads:
-        for file in form_uploads:
-            with open(os.path.join(shared_form_folder, file.name), "wb") as f:
+    form_files = st.file_uploader("Admin Only: Upload shared forms", type=["xlsx"], accept_multiple_files=True, key="admin_form")
+    if form_files:
+        for file in form_files:
+            with open(os.path.join(shared_folder, file.name), "wb") as f:
                 f.write(file.read())
-        st.success("Shared form files uploaded successfully.")
-        st.experimental_set_query_params(dummy=str(pd.Timestamp.now()))  # trigger rerun safely
+        st.success(":white_check_mark: Forms uploaded to shared folder.")
+
+    file_to_delete = st.selectbox("Admin Only: Select a shared form to delete", [""] + shared_files)
+    if file_to_delete:
+        if st.button("Delete Selected Shared Form"):
+            try:
+                os.remove(os.path.join(shared_folder, file_to_delete))
+                st.success(f"Deleted shared form: {file_to_delete}")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error deleting file: {e}")
 
 # ------------------------------
 # Upload Price List Files
 # ------------------------------
 st.subheader(":file_folder: Upload Price List Files")
-uploaded_files = st.file_uploader("Upload one or more Excel files", type=["xlsx"], accept_multiple_files=True, key="price_upload")
+uploaded_files = st.file_uploader("Upload one or more Excel files", type=["xlsx"], accept_multiple_files=True)
 if uploaded_files:
     for file in uploaded_files:
         with open(os.path.join(user_folder, file.name), "wb") as f:
@@ -83,15 +88,15 @@ st.subheader(":open_file_folder: Manage Price Lists")
 price_list_files = os.listdir(user_folder)
 selected_file = st.radio("Choose one file to match or use all", ["All files"] + price_list_files)
 
-file_to_delete = st.selectbox("Select a file to delete", [""] + price_list_files, key="delete_select")
+file_to_delete = st.selectbox("Select a price list file to delete", [""] + price_list_files, key="delete_price")
 if file_to_delete:
-    if st.button("Delete Selected File"):
+    if st.button("Delete Selected Price List"):
         try:
             os.remove(os.path.join(user_folder, file_to_delete))
-            st.success(f"Deleted file: {file_to_delete}")
+            st.success(f"Deleted price list: {file_to_delete}")
+            st.rerun()
         except Exception as e:
             st.error(f"Error deleting file: {e}")
-        st.experimental_set_query_params(dummy=str(pd.Timestamp.now()))  # rerun safely
 
 # ------------------------------
 # Upload Estimation File
@@ -156,8 +161,17 @@ if estimation_file and price_list_files:
         total = amt_mat + amt_lab
 
         output_data.append([
-            row[est_cols[0]], row[est_cols[1]], desc_proposed, row[est_cols[2]],
-            unit, qty, m_cost, l_cost, amt_mat, amt_lab, total
+            row[est_cols[0]],  # Model
+            row[est_cols[1]],  # Description (requested)
+            desc_proposed,     # Description (proposed)
+            row[est_cols[2]],  # Specification
+            unit,              # Unit
+            qty,               # Quantity
+            m_cost,            # Material Cost
+            l_cost,            # Labour Cost
+            amt_mat,           # Amount Material
+            amt_lab,           # Amount Labour
+            total              # Total
         ])
 
     result_df = pd.DataFrame(output_data, columns=[
@@ -189,4 +203,4 @@ if estimation_file and price_list_files:
         if not unmatched_df.empty:
             unmatched_df.to_excel(writer, index=False, sheet_name="Unmatched Items")
 
-    st.download_button("\U0001F4E5 Download Cleaned Estimation File", buffer.getvalue(), file_name="Estimation_Result_BuildWise.xlsx")
+    st.download_button("📥 Download Cleaned Estimation File", buffer.getvalue(), file_name="Estimation_Result_BuildWise.xlsx")
