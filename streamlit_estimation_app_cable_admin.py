@@ -39,37 +39,37 @@ if not username:
     st.stop()
 
 user_folder = f"user_data/{username}"
+shared_form_folder = "forms_shared"
 os.makedirs(user_folder, exist_ok=True)
-
-shared_folder = "shared_forms"
-os.makedirs(shared_folder, exist_ok=True)
+os.makedirs(shared_form_folder, exist_ok=True)
 
 # ------------------------------
-# Shared Forms (Admin Upload)
+# Admin Upload for Shared Forms
 # ------------------------------
-st.subheader(":bookmark_tabs: Price List and Estimation Request Form (Mẫu Bảng Giá và Mẫu Yêu Cầu Vào Giá)")
-shared_files = os.listdir(shared_folder)
+st.subheader(":inbox_tray: Price List and Estimation Request Form (Mẫu Bảng Giá và Mẫu Yêu Cầu Vào Giá)")
+st.markdown("These are the shared forms available to all users:")
+
+shared_files = os.listdir(shared_form_folder)
 if shared_files:
-    st.write("Available shared forms:")
-    for file in shared_files:
-        st.markdown(f"- {file}")
+    for f in shared_files:
+        st.markdown(f"- {f}")
 else:
     st.info("No shared forms uploaded yet.")
 
 if username == "Admin123":
-    st.markdown("**Admin Upload Area**")
-    admin_file = st.file_uploader("Upload form to share", type=["xlsx"], key="admin_form")
-    if admin_file:
-        with open(os.path.join(shared_folder, admin_file.name), "wb") as f:
-            f.write(admin_file.read())
-        st.success("Form uploaded to shared folder successfully.")
-        st.experimental_rerun()
+    form_uploads = st.file_uploader("Admin: Upload shared form files", type=["xlsx"], accept_multiple_files=True, key="admin_upload")
+    if form_uploads:
+        for file in form_uploads:
+            with open(os.path.join(shared_form_folder, file.name), "wb") as f:
+                f.write(file.read())
+        st.success("Shared form files uploaded successfully.")
+        st.experimental_set_query_params(dummy=str(pd.Timestamp.now()))  # trigger rerun safely
 
 # ------------------------------
 # Upload Price List Files
 # ------------------------------
 st.subheader(":file_folder: Upload Price List Files")
-uploaded_files = st.file_uploader("Upload one or more Excel files", type=["xlsx"], accept_multiple_files=True)
+uploaded_files = st.file_uploader("Upload one or more Excel files", type=["xlsx"], accept_multiple_files=True, key="price_upload")
 if uploaded_files:
     for file in uploaded_files:
         with open(os.path.join(user_folder, file.name), "wb") as f:
@@ -83,15 +83,15 @@ st.subheader(":open_file_folder: Manage Price Lists")
 price_list_files = os.listdir(user_folder)
 selected_file = st.radio("Choose one file to match or use all", ["All files"] + price_list_files)
 
-file_to_delete = st.selectbox("Select a file to delete", [""] + price_list_files)
+file_to_delete = st.selectbox("Select a file to delete", [""] + price_list_files, key="delete_select")
 if file_to_delete:
     if st.button("Delete Selected File"):
         try:
             os.remove(os.path.join(user_folder, file_to_delete))
             st.success(f"Deleted file: {file_to_delete}")
-            st.experimental_rerun()
         except Exception as e:
             st.error(f"Error deleting file: {e}")
+        st.experimental_set_query_params(dummy=str(pd.Timestamp.now()))  # rerun safely
 
 # ------------------------------
 # Upload Estimation File
@@ -156,17 +156,8 @@ if estimation_file and price_list_files:
         total = amt_mat + amt_lab
 
         output_data.append([
-            row[est_cols[0]],  # Model
-            row[est_cols[1]],  # Description (requested)
-            desc_proposed,     # Description (proposed)
-            row[est_cols[2]],  # Specification
-            unit,              # Unit
-            qty,               # Quantity
-            m_cost,            # Material Cost
-            l_cost,            # Labour Cost
-            amt_mat,           # Amount Material
-            amt_lab,           # Amount Labour
-            total              # Total
+            row[est_cols[0]], row[est_cols[1]], desc_proposed, row[est_cols[2]],
+            unit, qty, m_cost, l_cost, amt_mat, amt_lab, total
         ])
 
     result_df = pd.DataFrame(output_data, columns=[
