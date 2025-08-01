@@ -3,6 +3,7 @@ import pandas as pd
 import os
 import re
 from io import BytesIO
+from rapidfuzz import fuzz
 
 # ------------------------------
 # Utility Functions
@@ -21,23 +22,27 @@ def clean(text):
 def extract_size(text):
     text = str(text).lower()
     text = text.replace("mm2", "").replace("mm²", "")
-    text = re.sub(r"(\d)c", r"", text)  # convert 4C -> 4
+    text = re.sub(r"(\d)c", r"\1", text)
     match = re.search(r'\b\d{1,2}\s*[x×]\s*\d{1,3}\b', text)
     return match.group(0).replace(" ", "") if match else ""
 
-def extract_material_tokens(text):
-    text = str(text).upper()
-    text = re.sub(r"[^A-Z0-9/]", "", text)
-    tokens = text.split("/")
-    return [t for t in tokens if t]
+def extract_material_structure(text):
+    text = str(text).lower()
+    return re.findall(r'(cu|al|xlpe|pvc|pe|lszh|hdpe)', text)
 
-def score_material_match(query_tokens, db_tokens):
-    weights = {"CU": 1.0, "AL": 1.0, "PVC": 0.5, "XLPE": 0.5}
+def weighted_score(query_tokens, target_tokens):
+    weights = {
+        'cu': 1.0, 'al': 1.0,
+        'xlpe': 0.8, 'pvc': 0.6,
+        'lszh': 0.5, 'pe': 0.5, 'hdpe': 0.5
+    }
     score = 0
-    for token in query_tokens:
-        if token in db_tokens:
-            score += weights.get(token, 0.2)
-    return score
+    max_score = 0
+    for token in set(query_tokens + target_tokens):
+        max_score += weights.get(token, 0)
+        if token in query_tokens and token in target_tokens:
+            score += weights.get(token, 0)
+    return round((score / max_score) * 100, 2) if max_score > 0 else 0
 
 # ------------------------------
 # App Configuration
@@ -55,6 +60,32 @@ user_folder = f"user_data/{username}"
 form_folder = "shared_forms"
 os.makedirs(user_folder, exist_ok=True)
 os.makedirs(form_folder, exist_ok=True)
+
+# ------------------------------
+# Shared Forms
+# ------------------------------
+st.subheader(":scroll: Price List and Estimation Request Form (Mẫu Bảng Giá và Mẫu Yêu Cầu Vào Giá)")
+form_files = os.listdir(form_folder)
+if username == "Admin123":
+    form_uploads = st.file_uploader("Upload form files", type=["xlsx", "xls"], accept_multiple_files=True, key="form_upload")
+    if form_uploads:
+        for f in form_uploads:
+            with open(os.path.join(form_folder, f.name), "wb") as out_file:
+                out_file.write(f.read())
+        st.success("Form file(s) uploaded successfully.")
+
+    form_to_delete = st.selectbox("Select a form file to delete", [""] + form_files, key="form_delete")
+    if form_to_delete and st.button("Delete Selected Form File"):
+        try:
+            os.remove(os.path.join(form_folder, form_to_delete))
+            st.success(f"Deleted form file: {form_to_delete}")
+            st.experimental_rerun()
+        except Exception as e:
+            st.error(f"Error deleting form file: {e}")
+else:
+    for file in form_files:
+        with open(os.path.join(form_folder, file), "rb") as f:
+            st.download_button(f"📄 Download {file}", f.read(), file_name=file)
 
 # ------------------------------
 # Upload Price List Files
@@ -98,6 +129,7 @@ if estimation_file and price_list_files:
 
     est["combined"] = (est[est_cols[0]].fillna('') + " " + est[est_cols[1]].fillna('') + " " + est[est_cols[2]].fillna('')).apply(clean)
     est["size"] = (est[est_cols[0]].fillna('') + " " + est[est_cols[1]].fillna('') + " " + est[est_cols[2]].fillna('')).apply(extract_size)
+    est["materials"] = (est[est_cols[0]].fillna('') + " " + est[est_cols[1]].fillna('') + " " + est[est_cols[2]].fillna('')).apply(extract_material_structure)
 
     db_frames = []
     if selected_file == "All files":
@@ -116,27 +148,23 @@ if estimation_file and price_list_files:
 
     db["combined"] = (db[db_cols[0]].fillna('') + " " + db[db_cols[1]].fillna('') + " " + db[db_cols[2]].fillna('')).apply(clean)
     db["size"] = (db[db_cols[0]].fillna('') + " " + db[db_cols[1]].fillna('') + " " + db[db_cols[2]].fillna('')).apply(extract_size)
+    db["materials"] = (db[db_cols[0]].fillna('') + " " + db[db_cols[1]].fillna('') + " " + db[db_cols[2]].fillna('')).apply(extract_material_structure)
 
     output_data = []
     for i, row in est.iterrows():
         query = row["combined"]
         query_size = row["size"]
+        query_materials = row["materials"]
         unit = row[est_cols[3]]
         qty = row[est_cols[4]]
-        best = None
-        best_score = 0
 
+        best = None
         if query_size:
             db_filtered = db[db["size"] == query_size]
             if not db_filtered.empty:
-                for _, db_row in db_filtered.iterrows():
-                    score = score_material_match(
-                        extract_material_tokens(row[est_cols[1]]),
-                        extract_material_tokens(db_row[db_cols[1]])
-                    )
-                    if score > best_score:
-                        best_score = score
-                        best = db_row
+                db_filtered = db_filtered.copy()
+                db_filtered["score"] = db_filtered["materials"].apply(lambda m: weighted_score(query_materials, m))
+                best = db_filtered.loc[db_filtered["score"].idxmax()]
 
         if best is not None:
             desc_proposed = best[db_cols[1]]
@@ -153,17 +181,8 @@ if estimation_file and price_list_files:
         total = amt_mat + amt_lab
 
         output_data.append([
-            row[est_cols[0]],  # Model
-            row[est_cols[1]],  # Description (requested)
-            desc_proposed,     # Description (proposed)
-            row[est_cols[2]],  # Specification
-            unit,              # Unit
-            qty,               # Quantity
-            m_cost,            # Material Cost
-            l_cost,            # Labour Cost
-            amt_mat,           # Amount Material
-            amt_lab,           # Amount Labour
-            total              # Total
+            row[est_cols[0]], row[est_cols[1]], desc_proposed, row[est_cols[2]], unit, qty,
+            m_cost, l_cost, amt_mat, amt_lab, total
         ])
 
     result_df = pd.DataFrame(output_data, columns=[
@@ -172,11 +191,10 @@ if estimation_file and price_list_files:
     ])
 
     grand_total = pd.to_numeric(result_df["Total"], errors="coerce").sum()
-    grand_row = pd.DataFrame([[''] * 10 + [grand_total]], columns=result_df.columns)
-    result_final = pd.concat([result_df, grand_row], ignore_index=True)
+    result_df.loc[len(result_df.index)] = [""] * 10 + [grand_total]
 
     st.subheader(":mag: Matched Estimation")
-    display_df = result_final.copy()
+    display_df = result_df.copy()
     display_df["Quantity"] = pd.to_numeric(display_df["Quantity"], errors="coerce").fillna(0).astype(int).map("{:,}".format)
     for col in ["Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"]:
         display_df[col] = pd.to_numeric(display_df[col], errors="coerce").fillna(0).astype(int).map("{:,}".format)
@@ -191,8 +209,8 @@ if estimation_file and price_list_files:
 
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-        result_final.to_excel(writer, index=False, sheet_name="Matched Results")
+        result_df.to_excel(writer, index=False, sheet_name="Matched Results")
         if not unmatched_df.empty:
             unmatched_df.to_excel(writer, index=False, sheet_name="Unmatched Items")
 
-    st.download_button("\U0001F4E5 Download Cleaned Estimation File", buffer.getvalue(), file_name="Estimation_Result_BuildWise.xlsx")
+    st.download_button("📥 Download Cleaned Estimation File", buffer.getvalue(), file_name="Estimation_Result_BuildWise.xlsx")
