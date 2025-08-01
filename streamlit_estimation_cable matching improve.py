@@ -3,7 +3,6 @@ import pandas as pd
 import os
 import re
 from io import BytesIO
-from rapidfuzz import fuzz
 
 # ------------------------------
 # Utility Functions
@@ -26,6 +25,20 @@ def extract_size(text):
     match = re.search(r'\b\d{1,2}\s*[x×]\s*\d{1,3}\b', text)
     return match.group(0).replace(" ", "") if match else ""
 
+def extract_material_tokens(text):
+    text = str(text).upper()
+    text = re.sub(r"[^A-Z0-9/]", "", text)
+    tokens = text.split("/")
+    return [t for t in tokens if t]
+
+def score_material_match(query_tokens, db_tokens):
+    weights = {"CU": 1.0, "AL": 1.0, "PVC": 0.5, "XLPE": 0.5}
+    score = 0
+    for token in query_tokens:
+        if token in db_tokens:
+            score += weights.get(token, 0.2)
+    return score
+
 # ------------------------------
 # App Configuration
 # ------------------------------
@@ -42,32 +55,6 @@ user_folder = f"user_data/{username}"
 form_folder = "shared_forms"
 os.makedirs(user_folder, exist_ok=True)
 os.makedirs(form_folder, exist_ok=True)
-
-# ------------------------------
-# Shared Forms Section (for all users)
-# ------------------------------
-st.subheader(":scroll: Price List and Estimation Request Form (Mẫu Bảng Giá và Mẫu Yêu Cầu Vào Giá)")
-form_files = os.listdir(form_folder)
-if username == "Admin123":
-    form_uploads = st.file_uploader("Upload form files", type=["xlsx", "xls"], accept_multiple_files=True, key="form_upload")
-    if form_uploads:
-        for f in form_uploads:
-            with open(os.path.join(form_folder, f.name), "wb") as out_file:
-                out_file.write(f.read())
-        st.success("Form file(s) uploaded successfully.")
-
-    form_to_delete = st.selectbox("Select a form file to delete", [""] + form_files, key="form_delete")
-    if form_to_delete and st.button("Delete Selected Form File"):
-        try:
-            os.remove(os.path.join(form_folder, form_to_delete))
-            st.success(f"Deleted form file: {form_to_delete}")
-            st.experimental_rerun()
-        except Exception as e:
-            st.error(f"Error deleting form file: {e}")
-else:
-    for file in form_files:
-        with open(os.path.join(form_folder, file), "rb") as f:
-            st.download_button(f"📄 Download {file}", f.read(), file_name=file)
 
 # ------------------------------
 # Upload Price List Files
@@ -87,7 +74,6 @@ st.subheader(":open_file_folder: Manage Price Lists")
 price_list_files = os.listdir(user_folder)
 selected_file = st.radio("Choose one file to match or use all", ["All files"] + price_list_files)
 
-# Allow deletion of uploaded price list files
 file_to_delete = st.selectbox("Select a file to delete", [""] + price_list_files)
 if file_to_delete:
     if st.button("Delete Selected File"):
@@ -137,14 +123,20 @@ if estimation_file and price_list_files:
         query_size = row["size"]
         unit = row[est_cols[3]]
         qty = row[est_cols[4]]
-
         best = None
+        best_score = 0
+
         if query_size:
             db_filtered = db[db["size"] == query_size]
             if not db_filtered.empty:
-                db_filtered = db_filtered.copy()
-                db_filtered["score"] = db_filtered["combined"].apply(lambda x: fuzz.token_set_ratio(query, x))
-                best = db_filtered.loc[db_filtered["score"].idxmax()]
+                for _, db_row in db_filtered.iterrows():
+                    score = score_material_match(
+                        extract_material_tokens(row[est_cols[1]]),
+                        extract_material_tokens(db_row[db_cols[1]])
+                    )
+                    if score > best_score:
+                        best_score = score
+                        best = db_row
 
         if best is not None:
             desc_proposed = best[db_cols[1]]
