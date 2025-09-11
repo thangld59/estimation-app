@@ -308,12 +308,12 @@ if estimation_file and price_list_files:
         frames = []
         for f in price_list_files:
             df = pd.read_excel(os.path.join(user_folder, f)).dropna(how="all")
-            df["_source_"] = f
+            df["__source__"] = f
             frames.append(df)
         db = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     else:
         db = pd.read_excel(os.path.join(user_folder, selected_file)).dropna(how="all")
-        db["_source_"] = selected_file
+        db["__source__"] = selected_file
 
     if db.empty:
         st.error("Your selected price list(s) are empty.")
@@ -470,3 +470,4 @@ def _safe_bool(df, col, tuple_val, default=False):
 def _safe_voltage(df, col, tuple_val, default=""):
     val = default if not isinstance(tuple_val, tuple) else df.loc[df["main_cores_size"] == tuple_val, col].iloc[0]
     return str(val) if pd.notna(val) else ""
+
