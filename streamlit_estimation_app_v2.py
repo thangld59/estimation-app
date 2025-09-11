@@ -7,14 +7,14 @@ from io import BytesIO
 from rapidfuzz import fuzz
 
 # =========================================================
-# UI SETUP
+# PAGE / HEADER
 # =========================================================
 st.set_page_config(page_title="BuildWise", page_icon="📐", layout="wide")
 try:
     st.image("assets/logo.png", width=120)
 except Exception:
     pass
-st.title(":triangular_ruler: BuildWise - Smart Estimation Tool (Cable with Neutral/Earth)")
+st.title(":triangular_ruler: BuildWise - Smart Estimation Tool (Cable improved)")
 
 # ---------------------------------------------------------
 # Simple identity (not secure auth; just role switch)
@@ -23,6 +23,9 @@ username = st.sidebar.text_input("Username")
 if not username:
     st.warning("Please enter your username to continue.")
     st.stop()
+
+# Threshold control (you can adjust if matches look too strict/loose)
+cable_threshold = st.sidebar.slider("Cable match threshold", 0, 100, 70)
 
 # Folders
 USER_ROOT = "user_data"
@@ -39,7 +42,9 @@ os.makedirs(user_folder, exist_ok=True)
 MATERIAL_KEYWORDS = {
     "cu": "CU",
     "đồng": "CU",
+    "dong": "CU",
     "al": "AL",
+    "nhom": "AL",
     "nhôm": "AL",
     "aluminium": "AL",
 }
@@ -52,32 +57,37 @@ INSULATION_KEYWORDS = {
 }
 
 SHIELD_KEYWORDS = ["screen", "tape", "shield", "armored", "swa", "sta", "a", "armour", "armored"]
-CABLE_KEYWORDS = ["cáp", "cable", "dây điện", "wire", "day dien", "cap"]
+CABLE_WORDS = ["cáp", "cap", "cable", "dây điện", "day dien", "wire"]
 
 def normalize_spaces(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 def clean_text(text: str) -> str:
     s = str(text).lower()
-    # normalize units
     s = s.replace("mm^2", "mm2").replace("mm²", "mm2")
     s = s.replace("/", " / ").replace("-", " ")
     s = s.replace(",", " ")
-    # remove duplicated words noise
     s = re.sub(r"\b0[.,]?\s*6\s*kv\b", "0.6kv", s)
     s = re.sub(r"\b1[.,]?\s*0\s*kv\b", "1.0kv", s)
     s = normalize_spaces(s)
     return s
 
+def seems_like_cable(s: str) -> bool:
+    # If has any cable keywords OR a cores×size pattern OR XLPE/PVC words, treat as cable
+    if any(w in s for w in CABLE_WORDS):
+        return True
+    if re.search(r"\b\d{1,2}\s*[x×]\s*\d{1,3}(\.\d+)?\b", s):
+        return True
+    if any(k in s for k in ["xlpe", "pvc", "lszh", "pe"]):
+        return True
+    return False
+
 def detect_category(text: str) -> str:
     s = clean_text(text)
-    if any(k in s for k in CABLE_KEYWORDS):
-        return "cable"
-    return "other"
+    return "cable" if seems_like_cable(s) else "other"
 
 def extract_voltage(text: str) -> str:
     s = clean_text(text)
-    # capture like 0.6/1kV, 0.6-1kV, 0.6 1kV, 0.6/1 kv, 0.6/1
     m = re.search(r"0[.,]?\s*6\s*[/\- ]\s*1(?:[.,]?\s*0)?\s*k?v?", s)
     return "0.6/1kV" if m else ""
 
@@ -103,51 +113,43 @@ def has_shield(text: str) -> bool:
 
 def extract_core_size_main_and_extra(text: str):
     """
-    Returns:
-      main_cores:int|None,
-      main_size:float|None,
-      extra_type:str|None   ('E','N','1C'),
-      extra_size:float|None
-    Supports examples:
+    Returns: (main_cores:int|None, main_size:float|None, extra_type:str|None ('E','N','1C'), extra_size:float|None)
+    Supports:
       '3C x 70mm2 + 1C x 50mm2'
       '3x2.5 + E50'
       '3Cx70 + N50'
     """
-    s = clean_text(text)
-    s = s.replace("(", " ").replace(")", " ")
+    s = clean_text(text).replace("(", " ").replace(")", " ")
     s = normalize_spaces(s)
 
-    # MAIN:  cores x size (allow C/core/cores/sợi/soi)
-    m = re.search(r"\b(\d{1,2})\s*(?:c|core|cores|sợi|soi)?\s*[x×]\s*(\d{1,3}(?:[.,]\d{1,2})?)\b", s)
     main_cores = None
     main_size = None
+    # MAIN cores × size
+    m = re.search(r"\b(\d{1,2})\s*(?:c|core|cores|sợi|soi)?\s*[x×]\s*(\d{1,3}(?:[.,]\d{1,2})?)\b", s)
     if m:
         main_cores = int(m.group(1))
         main_size = float(m.group(2).replace(",", "."))
 
-    # EXTRA: + 1C x 50  OR + E50 / + N50 (earth/neutral)
+    # Fallback for size-only like "2.5mm2"
+    if main_size is None:
+        ms = re.search(r"\b(\d{1,3}(?:[.,]\d{1,2})?)\s*mm2\b", s)
+        if ms:
+            main_size = float(ms.group(1).replace(",", "."))
+
     extra_type = None
     extra_size = None
-
-    # Pattern A: + 1C x 50
+    # + 1C x 50
     mA = re.search(r"\+\s*1\s*c?\s*[x×]?\s*(\d{1,3}(?:[.,]\d{1,2})?)\b", s)
     if mA:
         extra_type = "1C"
         extra_size = float(mA.group(1).replace(",", "."))
-
-    # Pattern B: + E50 or + N50
+    # + E50 or + N50
     mB = re.search(r"\+\s*([en])\s*(\d{1,3}(?:[.,]\d{1,2})?)\b", s)
     if mB:
-        extra_type = mB.group(1).upper()  # 'E' or 'N'
+        extra_type = mB.group(1).upper()
         extra_size = float(mB.group(2).replace(",", "."))
 
-    # Pattern C: size-only mentioning for main (e.g., '2.5mm2'), if main not found
-    if main_size is None:
-        mS = re.search(r"\b(\d{1,3}(?:[.,]\d{1,2})?)\s*mm2\b", s)
-        if mS:
-            main_size = float(mS.group(1).replace(",", "."))
-
-    return main_cores, main_size, extra_type, extra_size
+    return (main_cores, main_size, extra_type, extra_size)
 
 def features_from_text(text: str):
     return {
@@ -164,10 +166,10 @@ WEIGHTS = {
     "material_overlap": 35,
     "insulation_overlap": 25,
     "shield_match": 10,
-    "voltage_match": 10,   # medium priority per your request
+    "voltage_match": 10,   # medium
     "cores_exact": 40,     # strong
     "size_exact": 40,      # strong
-    "extra_line_match": 20 # E/N/1C size if present
+    "extra_line_match": 20 # E/N/1C exact
 }
 
 def list_overlap_score(q_list, t_list):
@@ -176,38 +178,30 @@ def list_overlap_score(q_list, t_list):
     q = set(q_list); t = set(t_list)
     if not q:
         return 0
-    return int(round(100 * len(q & t) / len(q)))
+    return int(round(100 * len(q & t) / max(1, len(q))))
 
 def calc_weighted_score(qf, tf, size_tol_percent=None):
-    """
-    size_tol_percent: None -> exact size required for that bonus;
-                       else % tolerance allowed for smaller bonus.
-    """
     score = 0
 
-    # Materials overlap
-    score += WEIGHTS["material_overlap"] * (list_overlap_score(qf["materials"], tf["materials"]) / 100)
+    # Lists
+    score += WEIGHTS["material_overlap"] * (list_overlap_score(qf.get("materials", []), tf.get("materials", [])) / 100)
+    score += WEIGHTS["insulation_overlap"] * (list_overlap_score(qf.get("insulations", []), tf.get("insulations", [])) / 100)
 
-    # Insulation overlap
-    score += WEIGHTS["insulation_overlap"] * (list_overlap_score(qf["insulations"], tf["insulations"]) / 100)
-
-    # Shield match
-    if qf["shield"] == tf["shield"] and qf["shield"] is not None:
+    # Booleans
+    if qf.get("shield", False) == tf.get("shield", False):
         score += WEIGHTS["shield_match"]
 
-    # Voltage (medium)
-    if qf["voltage"] and tf["voltage"] and qf["voltage"] == tf["voltage"]:
+    # Voltage
+    if qf.get("voltage") and tf.get("voltage") and qf["voltage"] == tf["voltage"]:
         score += WEIGHTS["voltage_match"]
 
-    # Cores / Size strictness
-    q_cores, q_size, q_extra_type, q_extra_size = qf["main_cores_size"]
-    t_cores, t_size, t_extra_type, t_extra_size = tf["main_cores_size"]
+    # Cores & size
+    q_cores, q_size, q_extra_type, q_extra_size = qf.get("main_cores_size", (None, None, None, None))
+    t_cores, t_size, t_extra_type, t_extra_size = tf.get("main_cores_size", (None, None, None, None))
 
-    # cores
     if q_cores is not None and t_cores is not None and q_cores == t_cores:
         score += WEIGHTS["cores_exact"]
 
-    # size
     if q_size is not None and t_size is not None:
         if size_tol_percent is None:
             if abs(q_size - t_size) < 1e-9:
@@ -216,7 +210,6 @@ def calc_weighted_score(qf, tf, size_tol_percent=None):
             if t_size > 0 and abs(q_size - t_size) / t_size * 100 <= size_tol_percent:
                 score += max(WEIGHTS["size_exact"] - 4, 0)
 
-    # extra line (E/N/1C)
     if q_extra_type and t_extra_type:
         if q_extra_type == t_extra_type and q_extra_size is not None and t_extra_size is not None:
             if abs(q_extra_size - t_extra_size) < 1e-9:
@@ -324,23 +317,22 @@ if estimation_file and price_list_files:
         st.error("Price list file must have at least 6 columns (with description in column 2, material in col 5, labour in col 6).")
         st.stop()
 
-    # DB combined for analysis (first 3 cols)
+    # DB features from first 3 columns
     db["combined_raw"] = db[db_cols[0]].astype(str).fillna('') + " " + db[db_cols[1]].astype(str).fillna('') + " " + db[db_cols[2]].astype(str).fillna('')
     db["combined"] = db["combined_raw"].apply(clean_text)
     db_feats = db["combined"].apply(features_from_text)
     db = pd.concat([db, db_feats.apply(pd.Series)], axis=1)
 
-    # Matching
-    THRESHOLD = 70  # minimum score required
-
+    # MATCHING
     output_rows = []
+
     for i, row in est.iterrows():
+        # Only attempt cable match if row looks like cable. Otherwise, output unchanged (unmatched).
         if row["category"] != "cable":
-            # Non-cable rows are ignored (no match)
             desc_proposed = ""
             m_cost = l_cost = 0
-            qty = row[est_cols[4]]
             unit = row[est_cols[3]]
+            qty = row[est_cols[4]]
             qty_val = pd.to_numeric(qty, errors="coerce"); qty_val = 0 if pd.isna(qty_val) else qty_val
             amt_mat = qty_val * m_cost
             amt_lab = qty_val * l_cost
@@ -351,46 +343,52 @@ if estimation_file and price_list_files:
             ])
             continue
 
+        # Build query features
         qf = {
-            "materials": row["materials"],
-            "insulations": row["insulations"],
-            "shield": row["shield"],
-            "voltage": row["voltage"],
-            "main_cores_size": row["main_cores_size"],
+            "materials": row.get("materials", []) or [],
+            "insulations": row.get("insulations", []) or [],
+            "shield": bool(row.get("shield", False)),
+            "voltage": row.get("voltage", "") or "",
+            "main_cores_size": row.get("main_cores_size", (None, None, None, None)),
         }
 
-        # Strong prefilter: category cable + exact main size if present
-        q_cores, q_size, q_extra_type, q_extra_size = qf["main_cores_size"]
+        # Start with all cable rows in DB
         cand = db[db["category"] == "cable"].copy()
-        # If we have cores and size, keep rows that also have both
-        if q_cores is not None:
-            cand = cand[cand["main_cores_size"].apply(lambda x: isinstance(x, tuple) and x[0] is not None)]
-        if q_size is not None:
-            cand = cand[cand["main_cores_size"].apply(lambda x: isinstance(x, tuple) and x[1] is not None)]
 
-        # Compute weighted scores
+        # Soft filters: if we have cores/size, try to keep items that at least parsed something comparable.
+        q_cores, q_size, _, _ = qf["main_cores_size"]
+        if q_cores is not None:
+            cand = cand[cand["main_cores_size"].apply(lambda t: isinstance(t, tuple) and t[0] is not None)]
+        if cand.empty:
+            cand = db[db["category"] == "cable"].copy()
+
+        if q_size is not None:
+            cand = cand[cand["main_cores_size"].apply(lambda t: isinstance(t, tuple) and t[1] is not None)]
+        if cand.empty:
+            cand = db[db["category"] == "cable"].copy()
+
+        # Compute weighted scores per row
+        def row_score(r):
+            tf = {
+                "materials": r.get("materials", []) or [],
+                "insulations": r.get("insulations", []) or [],
+                "shield": bool(r.get("shield", False)),
+                "voltage": r.get("voltage", "") or "",
+                "main_cores_size": r.get("main_cores_size", (None, None, None, None)),
+            }
+            w = calc_weighted_score(qf, tf, size_tol_percent=None)
+            fuzzy = fuzz.token_set_ratio(row["combined"], r["combined"])
+            return w + 0.1 * fuzzy
+
         if not cand.empty:
             cand = cand.copy()
-            cand["wscore"] = cand["main_cores_size"].apply(
-                lambda t: calc_weighted_score(qf, {
-                    "materials": _safe_list(cand, "materials", t, default=[]),
-                    "insulations": _safe_list(cand, "insulations", t, default=[]),
-                    "shield": _safe_bool(cand, "shield", t, default=False),
-                    "voltage": _safe_voltage(cand, "voltage", t, default=""),
-                    "main_cores_size": t
-                })
-            )
-
-            # Add a fuzzy tie-breaker (low weight) to avoid random tie on identical attributes
-            cand["fuzzy"] = cand["combined"].apply(lambda x: fuzz.token_set_ratio(row["combined"], x))
-            cand["score_final"] = cand["wscore"] + 0.1 * cand["fuzzy"]
+            cand["score_final"] = cand.apply(row_score, axis=1)
             cand = cand.sort_values("score_final", ascending=False)
 
         best = None
-        if not cand.empty and cand.iloc[0]["score_final"] >= THRESHOLD:
+        if not cand.empty and cand.iloc[0]["score_final"] >= cable_threshold:
             best = cand.iloc[0]
 
-        # Build output row
         if best is not None:
             desc_proposed = best[db_cols[1]]
             m_cost = pd.to_numeric(best[db_cols[4]], errors="coerce")
@@ -436,7 +434,6 @@ if estimation_file and price_list_files:
     # Display
     st.subheader(":mag: Matched Estimation")
     display_df = result_final.copy()
-    # Pretty numbers
     display_df["Quantity"] = pd.to_numeric(display_df["Quantity"], errors="coerce").fillna(0).astype(int).map("{:,}".format)
     for col in ["Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"]:
         display_df[col] = pd.to_numeric(display_df[col], errors="coerce").fillna(0).astype(int).map("{:,}".format)
@@ -456,18 +453,3 @@ if estimation_file and price_list_files:
         if not unmatched_df.empty:
             unmatched_df.to_excel(writer, index=False, sheet_name="Unmatched Items")
     st.download_button("📥 Download Cleaned Estimation File", buffer.getvalue(), file_name="Estimation_Result_BuildWise.xlsx")
-
-# =========================================================
-# SAFE EXTRACTORS FOR WEIGHTED SCORE (avoid closure issues)
-# =========================================================
-def _safe_list(df, col, tuple_val, default=None):
-    # col already exists in df; row value is read later in apply caller
-    return default if not isinstance(tuple_val, tuple) else df.loc[df["main_cores_size"] == tuple_val, col].iloc[0]
-
-def _safe_bool(df, col, tuple_val, default=False):
-    return default if not isinstance(tuple_val, tuple) else bool(df.loc[df["main_cores_size"] == tuple_val, col].iloc[0])
-
-def _safe_voltage(df, col, tuple_val, default=""):
-    val = default if not isinstance(tuple_val, tuple) else df.loc[df["main_cores_size"] == tuple_val, col].iloc[0]
-    return str(val) if pd.notna(val) else ""
-
