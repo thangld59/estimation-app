@@ -10,7 +10,7 @@ from rapidfuzz import fuzz
 # ------------------------------
 def clean(text: str) -> str:
     text = str(text).lower()
-    # strip voltages in free text (we don't use them for cable size match here)
+    # strip voltages in free text (we don’t use them for size parsing here)
     text = re.sub(r"0[,.]?6kv|1[,.]?0kv", "", text)
     # normalize units & punctuation
     text = text.replace("mm2", "").replace("mm²", "")
@@ -22,16 +22,81 @@ def clean(text: str) -> str:
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
-def extract_size(text: str) -> str:
+MAIN_SIZE_RE = re.compile(r'\b(\d{1,2})\s*[cC]?\s*[x×]\s*(\d{1,3}(?:\.\d+)?)\b')
+# Matches things like: + 1C x 50 / + 50 / + E50 / + PE50 / + N50 (spaces optional)
+AUX_RE = re.compile(
+    r'\+\s*(?:([1-9]\d*)\s*[cC]?\s*[x×]\s*)?((?:pe|PE|e|E|n|N)\s*)?(\d{1,3}(?:\.\d+)?)'
+)
+
+def parse_cable_spec(text: str):
     """
-    Extracts patterns like '3x2.5', '4x16', '2x4', with optional spaces or ×.
-    Also converts '4C' -> '4' before extraction, so '4C x 25' -> '4x25'.
+    Extract a structured spec:
+      - main_cores, main_size (e.g., 3 and 70 for "3C x 70")
+      - aux_type: 'E' (Earth), 'N' (Neutral), or '' if none/unknown
+      - aux_cores (int or None), aux_size (float or None)
+      - canonical keys:
+          main_key: "3x70"
+          aux_key:  "E50", "N50", "1x50", or "" if none
+          full_key: "3x70+E50" (when aux exists)
     """
-    text = str(text).lower()
-    text = text.replace("mm2", "").replace("mm²", "")
-    text = re.sub(r"(\d)\s*[cC]", r"\1", text)  # 4C -> 4
-    match = re.search(r'\b\d{1,2}\s*[x×]\s*\d{1,3}(\.\d+)?\b', text)
-    return match.group(0).replace(" ", "") if match else ""
+    text = str(text).lower().replace("mm2", "").replace("mm²", "")
+    text = re.sub(r"\s+", " ", text)
+
+    main_match = MAIN_SIZE_RE.search(text)
+    main_cores, main_size = None, None
+    if main_match:
+        main_cores = int(main_match.group(1))
+        main_size = float(main_match.group(2))
+
+    aux_match = AUX_RE.search(text)
+    aux_type = ""
+    aux_cores = None
+    aux_size = None
+    if aux_match:
+        # optional cores, optional type (E/PE/N), size
+        cores_str = aux_match.group(1)
+        type_str = aux_match.group(2)
+        size_str = aux_match.group(3)
+
+        if cores_str:
+            try:
+                aux_cores = int(cores_str)
+            except:
+                aux_cores = None
+
+        if type_str:
+            t = type_str.strip().upper()
+            if t in ["E", "PE"]:
+                aux_type = "E"
+            elif t == "N":
+                aux_type = "N"
+
+        try:
+            aux_size = float(size_str)
+        except:
+            aux_size = None
+
+    # Canonical keys
+    main_key = f"{int(main_cores)}x{int(main_size) if main_size and main_size.is_integer() else main_size}" if main_cores and main_size else ""
+    if aux_type and aux_size:
+        aux_key = f"{aux_type}{int(aux_size) if aux_size.is_integer() else aux_size}"
+    elif aux_cores and aux_size:
+        # no E/N given → just show as “1x50”
+        aux_key = f"{aux_cores}x{int(aux_size) if aux_size.is_integer() else aux_size}"
+    else:
+        aux_key = ""
+
+    full_key = f"{main_key}+{aux_key}" if main_key and aux_key else main_key
+    return {
+        "main_cores": main_cores,
+        "main_size": main_size,
+        "aux_type": aux_type,     # 'E', 'N', or ''
+        "aux_cores": aux_cores,   # int or None
+        "aux_size": aux_size,     # float or None
+        "main_key": main_key,     # e.g., "3x70"
+        "aux_key": aux_key,       # e.g., "E50", "N50", "1x50"
+        "full_key": full_key      # e.g., "3x70+E50"
+    }
 
 def extract_material_structure_tokens(text: str):
     """
@@ -39,7 +104,6 @@ def extract_material_structure_tokens(text: str):
     e.g. "Cu/XLPE/PVC" -> ["cu","xlpe","pvc"].
     """
     text = str(text).lower()
-    # common tokens
     tokens = re.findall(r'(cu|al|aluminium|xlpe|pvc|pe|lszh|hdpe)', text)
     norm = []
     for t in tokens:
@@ -126,7 +190,7 @@ else:
 # Upload Price List Files
 # ------------------------------
 st.subheader(":file_folder: Upload Price List Files")
-uploaded_files = st.file_uploader("Upload one or more Excel files", type=["xlsx"], accept_multiple_files=True)
+uploaded_files = st.file_uploader("Upload one or more Excel files", type=["xlsx"], accept_multiple_files=True, key="pl_upload")
 if uploaded_files:
     for file in uploaded_files:
         with open(os.path.join(user_folder, file.name), "wb") as f:
@@ -143,23 +207,29 @@ selected_file = st.radio("Choose one file to match or use all", ["All files"] + 
 
 # Allow deletion of uploaded price list files
 if price_list_files:
-    file_to_delete = st.selectbox("Select a file to delete", [""] + price_list_files, key="delete_pl")
-    if file_to_delete:
-        if st.button("Delete Selected File"):
-            try:
-                os.remove(os.path.join(user_folder, file_to_delete))
-                st.success(f"Deleted file: {file_to_delete}")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error deleting file: {e}")
+    col_del1, col_del2 = st.columns([3,1])
+    with col_del1:
+        file_to_delete = st.selectbox("Select a file to delete", [""] + price_list_files, key="delete_pl")
+    with col_del2:
+        if st.button("Delete Selected File", use_container_width=True):
+            if file_to_delete:
+                try:
+                    os.remove(os.path.join(user_folder, file_to_delete))
+                    st.success(f"Deleted file: {file_to_delete}")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error deleting file: {e}")
 
 # ------------------------------
 # Upload Estimation File
 # ------------------------------
 st.subheader(":page_facing_up: Upload Estimation File")
-estimation_file = st.file_uploader("Upload estimation request (.xlsx)", type=["xlsx"], key="est")
+estimation_file = st.file_uploader("Upload estimation request (.xlsx)", type=["xlsx"], key="est_file")
 
-if estimation_file and price_list_files:
+# Explicit action to run matching (prevents “need to refresh”)
+run_matching = st.button("🔎 Match now")
+
+if run_matching and estimation_file and price_list_files:
     # -------- Estimation --------
     est = pd.read_excel(estimation_file).dropna(how='all')
     est_cols = est.columns.tolist()
@@ -167,23 +237,19 @@ if estimation_file and price_list_files:
         st.error("Estimation file must have at least 5 columns.")
         st.stop()
 
-    est["combined"] = (
+    # Cleaned fields
+    base_concat_est = (
         est[est_cols[0]].fillna('') + " " +
         est[est_cols[1]].fillna('') + " " +
         est[est_cols[2]].fillna('')
-    ).apply(clean)
-
-    est["size"] = (
-        est[est_cols[0]].fillna('') + " " +
-        est[est_cols[1]].fillna('') + " " +
-        est[est_cols[2]].fillna('')
-    ).apply(extract_size)
-
-    est["materials"] = (
-        est[est_cols[0]].fillna('') + " " +
-        est[est_cols[1]].fillna('') + " " +
-        est[est_cols[2]].fillna('')
-    ).apply(extract_material_structure_tokens)
+    )
+    est["combined"] = base_concat_est.apply(clean)
+    # Parse main + auxiliary (E/N/+extra)
+    parsed_est = base_concat_est.apply(parse_cable_spec)
+    est["main_key"] = parsed_est.apply(lambda d: d["main_key"])
+    est["aux_key"]  = parsed_est.apply(lambda d: d["aux_key"])
+    est["full_key"] = parsed_est.apply(lambda d: d["full_key"])
+    est["materials"] = base_concat_est.apply(extract_material_structure_tokens)
 
     # -------- Price List (DB) --------
     db_frames = []
@@ -206,26 +272,18 @@ if estimation_file and price_list_files:
         st.error("Price list file must have at least 6 columns.")
         st.stop()
 
-    # For matching: prepare cleaned fields
-    db["combined"] = (
+    base_concat_db = (
         db[db_cols[0]].fillna('') + " " +
         db[db_cols[1]].fillna('') + " " +
         db[db_cols[2]].fillna('')
-    ).apply(clean)
+    )
+    db["combined"]  = base_concat_db.apply(clean)
+    parsed_db       = base_concat_db.apply(parse_cable_spec)
+    db["main_key"]  = parsed_db.apply(lambda d: d["main_key"])
+    db["aux_key"]   = parsed_db.apply(lambda d: d["aux_key"])
+    db["full_key"]  = parsed_db.apply(lambda d: d["full_key"])
+    db["materials"] = base_concat_db.apply(extract_material_structure_tokens)
 
-    db["size"] = (
-        db[db_cols[0]].fillna('') + " " +
-        db[db_cols[1]].fillna('') + " " +
-        db[db_cols[2]].fillna('')
-    ).apply(extract_size)
-
-    db["materials"] = (
-        db[db_cols[0]].fillna('') + " " +
-        db[db_cols[1]].fillna('') + " " +
-        db[db_cols[2]].fillna('')
-    ).apply(extract_material_structure_tokens)
-
-    # Quick visibility: how many rows we have
     st.caption(f"Estimation rows: {len(est)}")
     st.caption(f"Price list rows: {len(db)} (files: {', '.join(sorted(set(db['source'])))} )")
 
@@ -234,58 +292,70 @@ if estimation_file and price_list_files:
 
     for _, row in est.iterrows():
         query = row["combined"]
-        q_size = row["size"]
+        q_main = row["main_key"]
+        q_aux  = row["aux_key"]
         q_mats = row["materials"]
         unit = row[est_cols[3]]
-        qty = row[est_cols[4]]
+        qty  = row[est_cols[4]]
 
         best = None
         best_score = -1.0
 
-        # Stage 0: filter by size if we have one
-        candidates = db.copy()
-        if q_size:
-            candidates = candidates[candidates["size"] == q_size]
+        # Stage 0: strongest filter—exact main size match first
+        c0 = db.copy()
+        if q_main:
+            c0 = c0[c0["main_key"] == q_main]
 
-        # Helper scorers: weighted materials + fuzzy
-        def s1(r):
-            mat_score = weighted_material_score(q_mats, r["materials"])
-            fuzzy = fuzz.token_set_ratio(query, r["combined"])
-            return mat_score + 0.4 * fuzzy  # stronger fuzzy weight
+        # scoring function: prioritize aux match, then materials, then fuzzy
+        def score_row(r):
+            s = 0.0
+            # aux match bonus
+            if q_aux:
+                if r["aux_key"] == q_aux:
+                    s += 35.0
+                else:
+                    # partial credit if both have any aux (but different)
+                    if r["aux_key"]:
+                        s += 10.0
+            # material similarity
+            mat = weighted_material_score(q_mats, r["materials"])
+            s += 0.6 * mat  # stronger weight than before
+            # fuzzy similarity
+            s += 0.4 * fuzz.token_set_ratio(query, r["combined"])
+            return s
 
-        # Stage 1: strict material+fuzzy on size-filtered set
-        if not candidates.empty:
-            candidates = candidates.copy()
-            candidates["score"] = candidates.apply(s1, axis=1)
-            top = candidates.sort_values("score", ascending=False).head(1)
+        # Stage 1: try within same main size
+        if not c0.empty:
+            c0 = c0.copy()
+            c0["score"] = c0.apply(score_row, axis=1)
+            top = c0.sort_values("score", ascending=False).head(1)
             if not top.empty and top.iloc[0]["score"] >= match_threshold:
                 best = top.iloc[0]
                 best_score = best["score"]
 
-        # Stage 2: relax size filter (if Stage 1 failed)
+        # Stage 2: loosen main size (if Stage 1 failed)
         if best is None:
-            c2 = db.copy()
-            c2["score"] = c2.apply(s1, axis=1)
-            top2 = c2.sort_values("score", ascending=False).head(1)
+            c1 = db.copy()
+            c1["score"] = c1.apply(score_row, axis=1)
+            top2 = c1.sort_values("score", ascending=False).head(1)
             if not top2.empty and top2.iloc[0]["score"] >= match_threshold:
                 best = top2.iloc[0]
                 best_score = best["score"]
 
-        # Stage 3: fuzzy fallback (always pick top-1 so we show something)
+        # Stage 3: fuzzy-only fallback
         if best is None:
-            c3 = db.copy()
-            c3["score"] = c3["combined"].apply(lambda x: fuzz.token_set_ratio(query, x))
-            top3 = c3.sort_values("score", ascending=False).head(1)
+            c2 = db.copy()
+            c2["score"] = c2["combined"].apply(lambda x: fuzz.token_set_ratio(query, x))
+            top3 = c2.sort_values("score", ascending=False).head(1)
             if not top3.empty:
                 best = top3.iloc[0]
                 best_score = best["score"]
 
-        # Extract costs & description
         if best is not None and best_score >= 0:
             desc_proposed = best[db_cols[1]]
             m_cost = pd.to_numeric(best[db_cols[4]], errors="coerce")
             l_cost = pd.to_numeric(best[db_cols[5]], errors="coerce")
-            # if Stage 3’s fuzzy-only best is very low and you want to mark as unmatched, uncomment:
+            # If you want to mark too-low fuzzy as unmatched, uncomment:
             # if best_score < match_threshold:
             #     desc_proposed = ""
             #     m_cost = l_cost = 0
@@ -354,3 +424,5 @@ if estimation_file and price_list_files:
     st.download_button("📥 Download Cleaned Estimation File",
                        buffer.getvalue(),
                        file_name="Estimation_Result_BuildWise.xlsx")
+else:
+    st.info("Upload your estimation file and price list(s), then click *Match now*.")
