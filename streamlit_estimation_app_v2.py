@@ -20,8 +20,9 @@ if not username:
     st.warning("Please enter your username to continue.")
     st.stop()
 
-# Threshold control (loosen/tighten if needed)
+# Controls
 cable_threshold = st.sidebar.slider("Cable match threshold", 0, 100, 60)
+show_debug = st.sidebar.checkbox("Show debug features", value=False)
 
 # Folders
 USER_ROOT = "user_data"
@@ -48,13 +49,8 @@ def clean_text(text: str) -> str:
     return s
 
 MATERIAL_KEYWORDS = {
-    "cu": "CU",
-    "đồng": "CU",
-    "dong": "CU",
-    "al": "AL",
-    "nhom": "AL",
-    "nhôm": "AL",
-    "aluminium": "AL",
+    "cu": "CU", "đồng": "CU", "dong": "CU",
+    "al": "AL", "nhom": "AL", "nhôm": "AL", "aluminium": "AL",
 }
 INSULATION_KEYWORDS = {"xlpe":"XLPE","pvc":"PVC","pe":"PE","lszh":"LSZH"}
 SHIELD_KEYWORDS = ["screen","tape","shield","armored","armour","swa","sta","a"]
@@ -246,57 +242,83 @@ st.subheader(":page_facing_up: Upload Estimation File")
 estimation_file = st.file_uploader("Upload estimation request (.xlsx)", type=["xlsx"], key="est")
 
 if estimation_file and price_list_files:
-    est = pd.read_excel(estimation_file).dropna(how="all")
-    est_cols = est.columns.tolist()
-    if len(est_cols) < 5:
+    # ---------- Read Estimation ----------
+    est_raw = pd.read_excel(estimation_file).dropna(how="all")
+    if est_raw.shape[1] < 5:
         st.error("Estimation file must have at least 5 columns.")
         st.stop()
 
-    # Prepare estimation features
-    est["combined_raw"] = (
-        est[est_cols[0]].astype(str).fillna("") + " " +
-        est[est_cols[1]].astype(str).fillna("") + " " +
-        est[est_cols[2]].astype(str).fillna("")
-    )
+    st.markdown("**Map Estimation columns**")
+    est_cols_all = est_raw.columns.tolist()
+    est_model_col = st.selectbox("Est: Model column", est_cols_all, index=0)
+    est_desc_col  = st.selectbox("Est: Description column", est_cols_all, index=1)
+    est_spec_col  = st.selectbox("Est: Specification column", est_cols_all, index=2)
+    est_unit_col  = st.selectbox("Est: Unit column", est_cols_all, index=3)
+    est_qty_col   = st.selectbox("Est: Quantity column", est_cols_all, index=4)
+
+    est = pd.DataFrame({
+        "Model": est_raw[est_model_col].astype(str),
+        "Desc":  est_raw[est_desc_col].astype(str),
+        "Spec":  est_raw[est_spec_col].astype(str),
+        "Unit":  est_raw[est_unit_col],
+        "Qty":   est_raw[est_qty_col],
+    })
+    est["combined_raw"] = (est["Model"] + " " + est["Desc"] + " " + est["Spec"]).apply(str)
     est["combined"] = est["combined_raw"].apply(clean_text)
     est_feats = est["combined"].apply(features_from_text)
     est = pd.concat([est, est_feats.apply(pd.Series)], axis=1)
 
-    # Read DB(s)
+    # ---------- Read DB ----------
     if selected_file == "All files":
         frames = []
         for f in price_list_files:
             df = pd.read_excel(os.path.join(user_folder, f)).dropna(how="all")
             df["__source__"] = f
             frames.append(df)
-        db = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        db_raw = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     else:
-        db = pd.read_excel(os.path.join(user_folder, selected_file)).dropna(how="all")
-        db["__source__"] = selected_file
+        db_raw = pd.read_excel(os.path.join(user_folder, selected_file)).dropna(how="all")
+        db_raw["__source__"] = selected_file
 
-    if db.empty:
+    if db_raw.empty:
         st.error("Your selected price list(s) are empty.")
         st.stop()
 
-    db_cols = db.columns.tolist()
-    if len(db_cols) < 6:
-        st.error("Price list file must have at least 6 columns (desc in col 2, material cost col 5, labour cost col 6).")
+    if db_raw.shape[1] < 6:
+        st.error("Price list must have at least 6 columns.")
         st.stop()
 
-    # DB features from first 3 columns
-    db["combined_raw"] = (
-        db[db_cols[0]].astype(str).fillna("") + " " +
-        db[db_cols[1]].astype(str).fillna("") + " " +
-        db[db_cols[2]].astype(str).fillna("")
-    )
+    st.markdown("**Map Price List columns**")
+    db_cols_all = db_raw.columns.tolist()
+    db_model_col = st.selectbox("DB: Model column", db_cols_all, index=0)
+    db_desc_col  = st.selectbox("DB: Description column", db_cols_all, index=1)
+    db_spec_col  = st.selectbox("DB: Specification column", db_cols_all, index=2)
+    db_mcost_col = st.selectbox("DB: Material Cost column", db_cols_all, index=4)
+    db_lcost_col = st.selectbox("DB: Labour Cost column", db_cols_all, index=5)
+
+    db = pd.DataFrame({
+        "DB_Model": db_raw[db_model_col].astype(str),
+        "DB_Desc":  db_raw[db_desc_col].astype(str),
+        "DB_Spec":  db_raw[db_spec_col].astype(str),
+        "DB_MCost": pd.to_numeric(db_raw[db_mcost_col], errors="coerce"),
+        "DB_LCost": pd.to_numeric(db_raw[db_lcost_col], errors="coerce"),
+        "__source__": db_raw["__source__"]
+    })
+    db["combined_raw"] = (db["DB_Model"] + " " + db["DB_Desc"] + " " + db["DB_Spec"]).apply(str)
     db["combined"] = db["combined_raw"].apply(clean_text)
     db_feats = db["combined"].apply(features_from_text)
     db = pd.concat([db, db_feats.apply(pd.Series)], axis=1)
 
+    if show_debug:
+        st.markdown("#### 🔎 Debug: parsed Estimation features (first 10)")
+        st.dataframe(est.head(10))
+        st.markdown("#### 🔎 Debug: parsed DB features (first 10)")
+        st.dataframe(db.head(10))
+
+    # ---------- Matching ----------
     output_rows = []
 
     for i, row in est.iterrows():
-        # Build query features (always attempt cable match)
         qf = {
             "materials": row.get("materials", []) or [],
             "insulations": row.get("insulations", []) or [],
@@ -305,26 +327,20 @@ if estimation_file and price_list_files:
             "main_cores_size": row.get("main_cores_size", (None, None, None, None)),
         }
 
-        # Start with ALL db rows (DON'T gate by category to avoid empty sets)
         cand = db.copy()
 
-        # Soft filters: if we parsed cores/size, try to keep rows with parsable cores/size.
         q_cores, q_size, _, _ = qf["main_cores_size"]
         if q_cores is not None:
             tmp = cand[cand["main_cores_size"].apply(lambda t: isinstance(t, tuple) and t[0] is not None)]
             if not tmp.empty:
                 cand = tmp
-
         if q_size is not None:
             tmp = cand[cand["main_cores_size"].apply(lambda t: isinstance(t, tuple) and t[1] is not None)]
             if not tmp.empty:
                 cand = tmp
-
-        # If still empty (over-filtered), fall back to all rows
         if cand.empty:
             cand = db.copy()
 
-        # Compute final score per candidate
         def row_score(r):
             tf = {
                 "materials": r.get("materials", []) or [],
@@ -337,27 +353,24 @@ if estimation_file and price_list_files:
             fuzzy = fuzz.token_set_ratio(row["combined"], r["combined"])
             return w + 0.1 * fuzzy
 
+        best = None
         if not cand.empty:
             cand = cand.copy()
             cand["score_final"] = cand.apply(row_score, axis=1)
             cand = cand.sort_values("score_final", ascending=False)
-
-        best = None
-        if not cand.empty and cand.iloc[0]["score_final"] >= cable_threshold:
-            best = cand.iloc[0]
+            if not cand.empty and cand.iloc[0]["score_final"] >= cable_threshold:
+                best = cand.iloc[0]
 
         if best is not None:
-            desc_proposed = best[db_cols[1]]
-            m_cost = pd.to_numeric(best[db_cols[4]], errors="coerce")
-            l_cost = pd.to_numeric(best[db_cols[5]], errors="coerce")
-            m_cost = 0 if pd.isna(m_cost) else m_cost
-            l_cost = 0 if pd.isna(l_cost) else l_cost
+            desc_proposed = best["DB_Desc"]
+            m_cost = 0 if pd.isna(best["DB_MCost"]) else float(best["DB_MCost"])
+            l_cost = 0 if pd.isna(best["DB_LCost"]) else float(best["DB_LCost"])
         else:
             desc_proposed = ""
             m_cost = l_cost = 0
 
-        unit = row[est_cols[3]]
-        qty = row[est_cols[4]]
+        unit = row["Unit"]
+        qty = row["Qty"]
         qty_val = pd.to_numeric(qty, errors="coerce")
         qty_val = 0 if pd.isna(qty_val) else qty_val
         amt_mat = qty_val * m_cost
@@ -365,20 +378,20 @@ if estimation_file and price_list_files:
         total = amt_mat + amt_lab
 
         output_rows.append([
-            row[est_cols[0]],  # Model
-            row[est_cols[1]],  # Description (requested)
-            desc_proposed,     # Description (proposed)
-            row[est_cols[2]],  # Specification
-            unit,              # Unit
-            qty,               # Quantity
-            m_cost,            # Material Cost
-            l_cost,            # Labour Cost
-            amt_mat,           # Amount Material
-            amt_lab,           # Amount Labour
-            total              # Total
+            row["Model"],                 # Model
+            row["Desc"],                  # Description (requested)
+            desc_proposed,                # Description (proposed)
+            row["Spec"],                  # Specification
+            unit,                         # Unit
+            qty,                          # Quantity
+            m_cost,                       # Material Cost
+            l_cost,                       # Labour Cost
+            amt_mat,                      # Amount Material
+            amt_lab,                      # Amount Labour
+            total                         # Total
         ])
 
-    # Results
+    # ---------- Results ----------
     result_df = pd.DataFrame(output_rows, columns=[
         "Model", "Description (requested)", "Description (proposed)", "Specification",
         "Unit", "Quantity", "Material Cost", "Labour Cost",
