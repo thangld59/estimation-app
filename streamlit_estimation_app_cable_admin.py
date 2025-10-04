@@ -1,25 +1,46 @@
-# buildwise_with_login.py
+# buildwise_with_user_management.py
 import streamlit as st
 import pandas as pd
 import os
 import re
+import json
 from io import BytesIO
 from rapidfuzz import fuzz
 
 # ------------------------------
-# CONFIG: Users (edit to add more users)
+# Files & user persistence
 # ------------------------------
-USERS = {
+USERS_FILE = "users.json"
+FORM_FOLDER = "shared_forms"
+
+DEFAULT_USERS = {
     "Admin123": {"password": "BuildWise2025", "role": "admin"},
-    "User123": {"password": "User2025", "role": "user"},
-    "Engineer01": {"password": "Engineer2025", "role": "user"},
+    "User123": {"password": "User2025", "role": "user"}
 }
+
+def load_users():
+    if os.path.exists(USERS_FILE):
+        try:
+            with open(USERS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return DEFAULT_USERS.copy()
+    else:
+        save_users(DEFAULT_USERS)
+        return DEFAULT_USERS.copy()
+
+def save_users(users):
+    with open(USERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(users, f, indent=2, ensure_ascii=False)
+
+# Load or create users db
+USERS = load_users()
 
 # ------------------------------
 # Utility / Parsing / Scoring
 # ------------------------------
 MAIN_SIZE_RE = re.compile(r'\b(\d{1,2})\s*[cC]?\s*[x×]\s*(\d{1,3}(?:\.\d+)?)\b')
-AUX_RE = re.compile(r'\+\s*(?:([1-9]\d*)\s*[cC]?\s*[x×]\s*)?((?:pe|pe|e|n)\s*)?(\d{1,3}(?:\.\d+)?)', flags=re.IGNORECASE)
+AUX_RE = re.compile(r'\+\s*(?:([1-9]\d*)\s*[cC]?\s*[x×]\s*)?((?:pe|e|n))?(\d{1,3}(?:\.\d+)?)', flags=re.IGNORECASE)
 
 def clean(text: str) -> str:
     text = str(text).lower()
@@ -75,11 +96,11 @@ def parse_cable_spec(text: str) -> dict:
         except:
             aux_size = None
 
-    main_key = f"{int(main_cores)}x{int(main_size) if main_size and main_size.is_integer() else main_size}" if main_cores and main_size else ""
+    main_key = f"{int(main_cores)}x{int(main_size) if main_size and float(main_size).is_integer() else main_size}" if main_cores and main_size else ""
     if aux_type and aux_size:
-        aux_key = f"{aux_type}{int(aux_size) if aux_size and getattr(aux_size, 'is_integer', lambda: False)() else aux_size}"
+        aux_key = f"{aux_type}{int(aux_size) if aux_size and float(aux_size).is_integer() else aux_size}"
     elif aux_cores and aux_size:
-        aux_key = f"{aux_cores}x{int(aux_size) if aux_size and getattr(aux_size, 'is_integer', lambda: False)() else aux_size}"
+        aux_key = f"{aux_cores}x{int(aux_size) if aux_size and float(aux_size).is_integer() else aux_size}"
     else:
         aux_key = ""
 
@@ -123,10 +144,9 @@ def weighted_material_score(query_tokens, target_tokens) -> float:
     return (score / max_score) * 100.0
 
 # ------------------------------
-# Streamlit app: Login UI
+# Streamlit: Login & session state
 # ------------------------------
-st.set_page_config(page_title="BuildWise - Login", page_icon="📐", layout="wide")
-
+st.set_page_config(page_title="BuildWise", page_icon="📐", layout="wide")
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
     st.session_state["username"] = ""
@@ -137,7 +157,7 @@ def do_login(user: str, pwd: str):
     if user in USERS and USERS[user]["password"] == pwd:
         st.session_state["logged_in"] = True
         st.session_state["username"] = user
-        st.session_state["role"] = USERS[user]["role"]
+        st.session_state["role"] = USERS[user].get("role", "user")
         return True
     return False
 
@@ -146,6 +166,7 @@ def do_logout():
     st.session_state["username"] = ""
     st.session_state["role"] = ""
 
+# Login screen
 if not st.session_state["logged_in"]:
     st.title("📐 BuildWise - Sign in")
     with st.form("login_form", clear_on_submit=False):
@@ -158,19 +179,19 @@ if not st.session_state["logged_in"]:
                 st.success(f"Logged in as {st.session_state['username']} ({st.session_state['role']})")
                 st.experimental_rerun()
             else:
-                st.error("Invalid username or password. (Edit USERS dict in the script to add users.)")
+                st.error("Invalid username or password. Edit users.json to add users if needed.")
     st.stop()
 
-# ------------------------------
-# After login: main app UI
-# ------------------------------
+# After login: main app
 username = st.session_state["username"]
 role = st.session_state["role"]
 
-st.set_page_config(page_title="BuildWise", page_icon="📀", layout="wide")
+# Layout header
 col1, col2 = st.columns([8,1])
 with col1:
-    st.image("assets/logo.png", width=120)
+    # logo (keep your assets/logo.png)
+    if os.path.exists("assets/logo.png"):
+        st.image("assets/logo.png", width=120)
     st.markdown("## :triangular_ruler: BuildWise - Smart Estimation Tool")
 with col2:
     if st.button("🔒 Logout"):
@@ -183,39 +204,76 @@ match_threshold = st.sidebar.slider("Match threshold", 0, 100, 70,
 st.sidebar.markdown("---")
 st.sidebar.write(f"Signed in as *{username}* ({role})")
 
-# File folders
+# Ensure folders exist
 user_folder = f"user_data/{username}"
-form_folder = "shared_forms"
 os.makedirs(user_folder, exist_ok=True)
-os.makedirs(form_folder, exist_ok=True)
+os.makedirs(FORM_FOLDER, exist_ok=True)
 
 # ------------------------------
-# Shared Forms (Admin can upload/delete; users can download)
+# Admin: manage users UI
+# ------------------------------
+if role == "admin":
+    st.sidebar.markdown("### 🔧 Admin - User management")
+    users = load_users()
+    with st.sidebar.expander("Manage users (admin)"):
+        st.write("Add a new user (stored in users.json):")
+        new_user = st.text_input("New username", key="new_user")
+        new_pwd = st.text_input("New password", key="new_pwd")
+        new_role = st.selectbox("Role", ["user", "admin"], key="new_role")
+        if st.button("Add user"):
+            if not new_user:
+                st.sidebar.error("Please provide a username.")
+            elif new_user in users:
+                st.sidebar.error("User already exists.")
+            else:
+                users[new_user] = {"password": new_pwd, "role": new_role}
+                save_users(users)
+                st.sidebar.success(f"User {new_user} added.")
+        st.markdown("---")
+        st.write("Delete a user:")
+        deletable = [u for u in users.keys() if u != "Admin123"]
+        user_to_delete = st.selectbox("Select user to delete", [""] + deletable, key="del_user")
+        if st.button("Delete user"):
+            if user_to_delete and user_to_delete in users:
+                if user_to_delete == username:
+                    st.sidebar.error("You cannot delete your own account while logged in.")
+                else:
+                    users.pop(user_to_delete, None)
+                    save_users(users)
+                    st.sidebar.success(f"Deleted user {user_to_delete}.")
+        st.markdown("---")
+        st.write("Current users:")
+        for u, v in users.items():
+            st.write(f"- *{u}* ({v.get('role','user')})")
+    st.sidebar.markdown("---")
+
+# ------------------------------
+# Shared Forms (Admin uploads / deletes ; users download)
 # ------------------------------
 st.subheader(":scroll: Price List and Estimation Request Form (Mẫu Bảng Giá và Mẫu Yêu Cầu Vào Giá)")
-form_files = sorted(os.listdir(form_folder))
+form_files = sorted(os.listdir(FORM_FOLDER))
 if role == "admin":
-    forms_upload = st.file_uploader("Admin: Upload form files (xlsx/xls)", type=["xlsx", "xls"], accept_multiple_files=True, key="forms_up")
-    if forms_upload:
-        for f in forms_upload:
-            with open(os.path.join(form_folder, f.name), "wb") as out_f:
+    form_uploads = st.file_uploader("Admin: Upload form files (xlsx/xls)", type=["xlsx", "xls"], accept_multiple_files=True, key="forms_up")
+    if form_uploads:
+        for f in form_uploads:
+            with open(os.path.join(FORM_FOLDER, f.name), "wb") as out_f:
                 out_f.write(f.read())
         st.success("Form file(s) uploaded.")
-        st.experimental_rerun()
+        # no explicit rerun; the page will reflect new files on next interaction
 
     if form_files:
         chosen = st.selectbox("Select a form to delete", [""] + form_files, key="form_del")
         if chosen and st.button("Delete selected form"):
             try:
-                os.remove(os.path.join(form_folder, chosen))
+                os.remove(os.path.join(FORM_FOLDER, chosen))
                 st.success(f"Deleted {chosen}")
-                st.experimental_rerun()
             except Exception as e:
                 st.error(f"Error deleting form: {e}")
 else:
     if form_files:
         for f in form_files:
-            with open(os.path.join(form_folder, f), "rb") as fh:
+            path = os.path.join(FORM_FOLDER, f)
+            with open(path, "rb") as fh:
                 st.download_button(f"📄 Download {f}", fh.read(), file_name=f)
     else:
         st.info("No shared forms available.")
@@ -230,24 +288,21 @@ if uploaded_files:
         with open(os.path.join(user_folder, f.name), "wb") as out_f:
             out_f.write(f.read())
     st.success("Price list(s) uploaded.")
-    st.experimental_rerun()
 
 st.subheader(":open_file_folder: Manage Price Lists")
 price_list_files = sorted(os.listdir(user_folder))
 selected_file = st.radio("Choose one file to match or use all", ["All files"] + price_list_files)
 
-# delete user file
 if price_list_files:
     cola, colb = st.columns([3,1])
     with cola:
         to_del = st.selectbox("Select a price list to delete", [""] + price_list_files, key="del_pl")
     with colb:
-        if st.button("Delete", use_container_width=True):
+        if st.button("Delete selected price list"):
             if to_del:
                 try:
                     os.remove(os.path.join(user_folder, to_del))
                     st.success(f"Deleted {to_del}")
-                    st.experimental_rerun()
                 except Exception as e:
                     st.error(f"Error deleting file: {e}")
 
@@ -259,7 +314,7 @@ estimation_file = st.file_uploader("Upload estimation request (.xlsx)", type=["x
 run_matching = st.button("🔎 Match now")
 
 if run_matching:
-    if not estimation_file:
+    if estimation_file is None:
         st.error("Please upload an estimation file first.")
         st.stop()
     if not price_list_files:
