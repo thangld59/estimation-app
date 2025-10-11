@@ -1,59 +1,101 @@
+# buildwise_with_user_management.py
 import streamlit as st
 import pandas as pd
 import os
 import re
+import json
 from io import BytesIO
+from datetime import datetime
 from rapidfuzz import fuzz
 
 # ------------------------------
-# Utility Functions
+# Files & user persistence
 # ------------------------------
+USERS_FILE = "users.json"
+FORM_FOLDER = "shared_forms"
+
+DEFAULT_USERS = {
+    "Admin123": {"password": "BuildWise2025", "role": "admin"},
+    "User123": {"password": "User2025", "role": "user"}
+}
+
+def load_users():
+    if os.path.exists(USERS_FILE):
+        try:
+            with open(USERS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return DEFAULT_USERS.copy()
+    else:
+        save_users(DEFAULT_USERS)
+        return DEFAULT_USERS.copy()
+
+def save_users(users):
+    with open(USERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(users, f, indent=2, ensure_ascii=False)
+
+# Load or create users db
+USERS = load_users()
+
+# helpers for per-user data
+def user_company_file(username):
+    return os.path.join("user_data", username, "companies.json")
+
+def user_client_file(username):
+    return os.path.join("user_data", username, "clients.json")
+
+def load_json_safe(path, default):
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return default
+    return default
+
+def save_json_safe(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+# ------------------------------
+# Utility / Parsing / Scoring
+# ------------------------------
+MAIN_SIZE_RE = re.compile(r'\b(\d{1,2})\s*[cC]?\s*[x×]\s*(\d{1,3}(?:\.\d+)?)\b')
+AUX_RE = re.compile(r'\+\s*(?:([1-9]\d*)\s*[cC]?\s*[x×]\s*)?((?:pe|e|n))?(\d{1,3}(?:\.\d+)?)', flags=re.IGNORECASE)
+
 def clean(text: str) -> str:
     text = str(text).lower()
-    # strip voltages in free text (we don’t use them for size parsing here)
     text = re.sub(r"0[,.]?6kv|1[,.]?0kv", "", text)
-    # normalize units & punctuation
     text = text.replace("mm2", "").replace("mm²", "")
     text = text.replace("(", "").replace(")", "")
     text = text.replace("/", " ").replace(",", "")
     text = text.replace("-", " ")
-    # Vietnamese/English generic cable words removed to reduce noise
     text = text.replace("cáp", "").replace("cable", "").replace("dây", "")
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
-MAIN_SIZE_RE = re.compile(r'\b(\d{1,2})\s*[cC]?\s*[x×]\s*(\d{1,3}(?:\.\d+)?)\b')
-# Matches things like: + 1C x 50 / + 50 / + E50 / + PE50 / + N50 (spaces optional)
-AUX_RE = re.compile(
-    r'\+\s*(?:([1-9]\d*)\s*[cC]?\s*[x×]\s*)?((?:pe|PE|e|E|n|N)\s*)?(\d{1,3}(?:\.\d+)?)'
-)
-
-def parse_cable_spec(text: str):
-    """
-    Extract a structured spec:
-      - main_cores, main_size (e.g., 3 and 70 for "3C x 70")
-      - aux_type: 'E' (Earth), 'N' (Neutral), or '' if none/unknown
-      - aux_cores (int or None), aux_size (float or None)
-      - canonical keys:
-          main_key: "3x70"
-          aux_key:  "E50", "N50", "1x50", or "" if none
-          full_key: "3x70+E50" (when aux exists)
-    """
+def parse_cable_spec(text: str) -> dict:
     text = str(text).lower().replace("mm2", "").replace("mm²", "")
     text = re.sub(r"\s+", " ", text)
 
     main_match = MAIN_SIZE_RE.search(text)
     main_cores, main_size = None, None
     if main_match:
-        main_cores = int(main_match.group(1))
-        main_size = float(main_match.group(2))
+        try:
+            main_cores = int(main_match.group(1))
+        except:
+            main_cores = None
+        try:
+            main_size = float(main_match.group(2))
+        except:
+            main_size = None
 
     aux_match = AUX_RE.search(text)
     aux_type = ""
     aux_cores = None
     aux_size = None
     if aux_match:
-        # optional cores, optional type (E/PE/N), size
         cores_str = aux_match.group(1)
         type_str = aux_match.group(2)
         size_str = aux_match.group(3)
@@ -76,13 +118,11 @@ def parse_cable_spec(text: str):
         except:
             aux_size = None
 
-    # Canonical keys
-    main_key = f"{int(main_cores)}x{int(main_size) if main_size and main_size.is_integer() else main_size}" if main_cores and main_size else ""
+    main_key = f"{int(main_cores)}x{int(main_size) if main_size and float(main_size).is_integer() else main_size}" if main_cores and main_size else ""
     if aux_type and aux_size:
-        aux_key = f"{aux_type}{int(aux_size) if aux_size.is_integer() else aux_size}"
+        aux_key = f"{aux_type}{int(aux_size) if aux_size and float(aux_size).is_integer() else aux_size}"
     elif aux_cores and aux_size:
-        # no E/N given → just show as “1x50”
-        aux_key = f"{aux_cores}x{int(aux_size) if aux_size.is_integer() else aux_size}"
+        aux_key = f"{aux_cores}x{int(aux_size) if aux_size and float(aux_size).is_integer() else aux_size}"
     else:
         aux_key = ""
 
@@ -90,33 +130,26 @@ def parse_cable_spec(text: str):
     return {
         "main_cores": main_cores,
         "main_size": main_size,
-        "aux_type": aux_type,     # 'E', 'N', or ''
-        "aux_cores": aux_cores,   # int or None
-        "aux_size": aux_size,     # float or None
-        "main_key": main_key,     # e.g., "3x70"
-        "aux_key": aux_key,       # e.g., "E50", "N50", "1x50"
-        "full_key": full_key      # e.g., "3x70+E50"
+        "aux_type": aux_type,
+        "aux_cores": aux_cores,
+        "aux_size": aux_size,
+        "main_key": main_key,
+        "aux_key": aux_key,
+        "full_key": full_key
     }
 
 def extract_material_structure_tokens(text: str):
-    """
-    Returns a list of normalized material/insulation tokens in order,
-    e.g. "Cu/XLPE/PVC" -> ["cu","xlpe","pvc"].
-    """
     text = str(text).lower()
     tokens = re.findall(r'(cu|al|aluminium|xlpe|pvc|pe|lszh|hdpe)', text)
     norm = []
     for t in tokens:
-        if t in ["aluminium"]:
+        if t == "aluminium":
             norm.append("al")
         else:
             norm.append(t)
     return norm
 
 def weighted_material_score(query_tokens, target_tokens) -> float:
-    """
-    Weighted overlap: gives more weight to conductor and insulation.
-    """
     weights = {
         'cu': 1.0, 'al': 1.0,
         'xlpe': 0.8, 'pvc': 0.6,
@@ -125,7 +158,7 @@ def weighted_material_score(query_tokens, target_tokens) -> float:
     all_keys = set(query_tokens) | set(target_tokens)
     if not all_keys:
         return 0.0
-    max_score = sum(weights.get(k, 0.3) for k in all_keys)  # small default for unknowns
+    max_score = sum(weights.get(k, 0.3) for k in all_keys)
     score = 0.0
     for k in all_keys:
         if (k in query_tokens) and (k in target_tokens):
@@ -133,125 +166,302 @@ def weighted_material_score(query_tokens, target_tokens) -> float:
     return (score / max_score) * 100.0
 
 # ------------------------------
-# App Configuration
+# Streamlit: Login & session state
 # ------------------------------
-st.set_page_config(page_title="BuildWise", page_icon="📀", layout="wide")
-st.image("assets/logo.png", width=120)
-st.title(":triangular_ruler: BuildWise - Smart Estimation Tool")
+st.set_page_config(page_title="BuildWise", page_icon="📐", layout="wide")
+if "logged_in" not in st.session_state:
+    st.session_state["logged_in"] = False
+    st.session_state["username"] = ""
+    st.session_state["role"] = ""
 
-# Sidebar: username + threshold
-username = st.sidebar.text_input("Username")
-match_threshold = st.sidebar.slider("Cable match threshold", 0, 100, 45,
-                                    help="Lower = more matches; higher = stricter")
+def do_login(user: str, pwd: str):
+    user = user.strip()
+    if user in USERS and USERS[user]["password"] == pwd:
+        st.session_state["logged_in"] = True
+        st.session_state["username"] = user
+        st.session_state["role"] = USERS[user].get("role", "user")
+        return True
+    return False
 
-if not username:
-    st.warning("Please enter your username to continue.")
+def do_logout():
+    st.session_state["logged_in"] = False
+    st.session_state["username"] = ""
+    st.session_state["role"] = ""
+
+# Login screen
+if not st.session_state["logged_in"]:
+    st.title("📐 BuildWise - Sign in")
+    with st.form("login_form", clear_on_submit=False):
+        u = st.text_input("Username")
+        p = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Log in")
+        if submitted:
+            ok = do_login(u, p)
+            if ok:
+                st.success(f"Logged in as {st.session_state['username']} ({st.session_state['role']})")
+                st.experimental_rerun()
+            else:
+                st.error("Invalid username or password. Edit users.json to add users if needed.")
     st.stop()
 
+# After login: main app
+username = st.session_state["username"]
+role = st.session_state["role"]
+
+# Layout header
+col1, col2 = st.columns([8,1])
+with col1:
+    # logo (keep your assets/logo.png)
+    if os.path.exists("assets/logo.png"):
+        st.image("assets/logo.png", width=120)
+    st.markdown("## :triangular_ruler: BuildWise - Smart Estimation Tool")
+with col2:
+    if st.button("🔒 Logout"):
+        do_logout()
+        st.experimental_rerun()
+
+# Sidebar controls
+match_threshold = st.sidebar.slider("Match threshold", 0, 100, 70,
+                                    help="Minimum acceptance score for a 'good' match. Increase to be stricter.")
+st.sidebar.markdown("---")
+st.sidebar.write(f"Signed in as *{username}* ({role})")
+
+# Ensure folders exist
 user_folder = f"user_data/{username}"
-form_folder = "shared_forms"
 os.makedirs(user_folder, exist_ok=True)
-os.makedirs(form_folder, exist_ok=True)
+os.makedirs(FORM_FOLDER, exist_ok=True)
 
 # ------------------------------
-# Shared Forms Section (for all users)
+# Admin: manage users UI
+# ------------------------------
+if role == "admin":
+    st.sidebar.markdown("### 🔧 Admin - User management")
+    users = load_users()
+    with st.sidebar.expander("Manage users (admin)"):
+        st.write("Add a new user (stored in users.json):")
+        new_user = st.text_input("New username", key="new_user")
+        new_pwd = st.text_input("New password", key="new_pwd")
+        new_role = st.selectbox("Role", ["user", "admin"], key="new_role")
+        if st.button("Add user"):
+            if not new_user:
+                st.sidebar.error("Please provide a username.")
+            elif new_user in users:
+                st.sidebar.error("User already exists.")
+            else:
+                users[new_user] = {"password": new_pwd, "role": new_role}
+                save_users(users)
+                st.sidebar.success(f"User {new_user} added.")
+        st.markdown("---")
+        st.write("Delete a user:")
+        deletable = [u for u in users.keys() if u != "Admin123"]
+        user_to_delete = st.selectbox("Select user to delete", [""] + deletable, key="del_user")
+        if st.button("Delete user"):
+            if user_to_delete and user_to_delete in users:
+                if user_to_delete == username:
+                    st.sidebar.error("You cannot delete your own account while logged in.")
+                else:
+                    users.pop(user_to_delete, None)
+                    save_users(users)
+                    st.sidebar.success(f"Deleted user {user_to_delete}.")
+        st.markdown("---")
+        st.write("Current users:")
+        for u, v in users.items():
+            st.write(f"- *{u}* ({v.get('role','user')})")
+    st.sidebar.markdown("---")
+
+# ------------------------------
+# Company & Client management (per-user)
+# ------------------------------
+st.sidebar.markdown("### 🏢 Company & Client management")
+companies_path = user_company_file(username)
+clients_path = user_client_file(username)
+companies = load_json_safe(companies_path, [])
+clients = load_json_safe(clients_path, [])
+
+with st.sidebar.expander("Manage companies"):
+    st.write("Add a new company (stored per user):")
+    comp_name = st.text_input("Company name", key="comp_name")
+    comp_addr = st.text_input("Company address", key="comp_addr")
+    set_default = st.checkbox("Set this as default company", value=False, key="comp_default")
+    if st.button("Add company"):
+        if not comp_name:
+            st.sidebar.error("Company name required.")
+        else:
+            companies.append({"name": comp_name, "address": comp_addr})
+            save_json_safe(companies_path, companies)
+            if set_default:
+                # store default company name
+                save_json_safe(os.path.join(user_folder, "default_company.json"), {"default": comp_name})
+            st.sidebar.success("Company added.")
+            st.experimental_rerun()
+
+    st.markdown("Existing companies:")
+    for c in companies:
+        st.write(f"- *{c.get('name','')}* — {c.get('address','')}")
+
+    # delete company
+    if companies:
+        del_comp = st.selectbox("Delete a company", [""] + [c["name"] for c in companies], key="del_comp")
+        if st.button("Delete selected company"):
+            if del_comp:
+                companies = [c for c in companies if c["name"] != del_comp]
+                save_json_safe(companies_path, companies)
+                st.sidebar.success(f"Deleted {del_comp}")
+                st.experimental_rerun()
+
+with st.sidebar.expander("Manage clients"):
+    st.write("Add a new client (stored per user):")
+    client_name = st.text_input("Client name", key="client_name")
+    client_contact = st.text_input("Client contact / info", key="client_contact")
+    if st.button("Add client"):
+        if not client_name:
+            st.sidebar.error("Client name required.")
+        else:
+            clients.append({"name": client_name, "contact": client_contact})
+            save_json_safe(clients_path, clients)
+            st.sidebar.success("Client added.")
+            st.experimental_rerun()
+
+    st.markdown("Existing clients:")
+    for c in clients:
+        st.write(f"- *{c.get('name','')}* — {c.get('contact','')}")
+
+    # delete client
+    if clients:
+        del_client = st.selectbox("Delete a client", [""] + [c["name"] for c in clients], key="del_client")
+        if st.button("Delete selected client"):
+            if del_client:
+                clients = [c for c in clients if c["name"] != del_client]
+                save_json_safe(clients_path, clients)
+                st.sidebar.success(f"Deleted {del_client}")
+                st.experimental_rerun()
+
+st.sidebar.markdown("---")
+
+# ------------------------------
+# Shared Forms (Admin uploads / deletes ; users download)
 # ------------------------------
 st.subheader(":scroll: Price List and Estimation Request Form (Mẫu Bảng Giá và Mẫu Yêu Cầu Vào Giá)")
-
-form_files = sorted(os.listdir(form_folder))
-if username == "Admin123":
-    form_uploads = st.file_uploader("Upload form files", type=["xlsx", "xls"],
-                                    accept_multiple_files=True, key="form_upload")
+form_files = sorted(os.listdir(FORM_FOLDER))
+if role == "admin":
+    form_uploads = st.file_uploader("Admin: Upload form files (xlsx/xls)", type=["xlsx", "xls"], accept_multiple_files=True, key="forms_up")
     if form_uploads:
         for f in form_uploads:
-            with open(os.path.join(form_folder, f.name), "wb") as out_file:
-                out_file.write(f.read())
-        st.success("Form file(s) uploaded successfully.")
-        st.rerun()
-
+            with open(os.path.join(FORM_FOLDER, f.name), "wb") as out_f:
+                out_f.write(f.read())
+        st.success("Form file(s) uploaded.")
     if form_files:
-        form_to_delete = st.selectbox("Select a form file to delete", [""] + form_files, key="form_delete")
-        if form_to_delete and st.button("Delete Selected Form File"):
+        chosen = st.selectbox("Select a form to delete", [""] + form_files, key="form_del")
+        if chosen and st.button("Delete selected form"):
             try:
-                os.remove(os.path.join(form_folder, form_to_delete))
-                st.success(f"Deleted form file: {form_to_delete}")
-                st.rerun()
+                os.remove(os.path.join(FORM_FOLDER, chosen))
+                st.success(f"Deleted {chosen}")
             except Exception as e:
-                st.error(f"Error deleting form file: {e}")
+                st.error(f"Error deleting form: {e}")
 else:
     if form_files:
-        for file in form_files:
-            with open(os.path.join(form_folder, file), "rb") as f:
-                st.download_button(f"📄 Download {file}", f.read(), file_name=file)
+        for f in form_files:
+            path = os.path.join(FORM_FOLDER, f)
+            with open(path, "rb") as fh:
+                st.download_button(f"📄 Download {f}", fh.read(), file_name=f)
     else:
-        st.info("No shared forms uploaded yet.")
+        st.info("No shared forms available.")
 
 # ------------------------------
-# Upload Price List Files
+# Price list upload & manage (per user)
 # ------------------------------
 st.subheader(":file_folder: Upload Price List Files")
-uploaded_files = st.file_uploader("Upload one or more Excel files", type=["xlsx"], accept_multiple_files=True, key="pl_upload")
+uploaded_files = st.file_uploader("Upload one or more price list Excel files (.xlsx)", type=["xlsx"], accept_multiple_files=True, key="pl_up")
 if uploaded_files:
-    for file in uploaded_files:
-        with open(os.path.join(user_folder, file.name), "wb") as f:
-            f.write(file.read())
-    st.success(":white_check_mark: Price list uploaded successfully.")
-    st.rerun()
+    for f in uploaded_files:
+        with open(os.path.join(user_folder, f.name), "wb") as out_f:
+            out_f.write(f.read())
+    st.success("Price list(s) uploaded.")
 
-# ------------------------------
-# Manage Price Lists
-# ------------------------------
 st.subheader(":open_file_folder: Manage Price Lists")
 price_list_files = sorted(os.listdir(user_folder))
 selected_file = st.radio("Choose one file to match or use all", ["All files"] + price_list_files)
 
-# Allow deletion of uploaded price list files
 if price_list_files:
-    col_del1, col_del2 = st.columns([3,1])
-    with col_del1:
-        file_to_delete = st.selectbox("Select a file to delete", [""] + price_list_files, key="delete_pl")
-    with col_del2:
-        if st.button("Delete Selected File", use_container_width=True):
-            if file_to_delete:
+    cola, colb = st.columns([3,1])
+    with cola:
+        to_del = st.selectbox("Select a price list to delete", [""] + price_list_files, key="del_pl")
+    with colb:
+        if st.button("Delete selected price list"):
+            if to_del:
                 try:
-                    os.remove(os.path.join(user_folder, file_to_delete))
-                    st.success(f"Deleted file: {file_to_delete}")
-                    st.rerun()
+                    os.remove(os.path.join(user_folder, to_del))
+                    st.success(f"Deleted {to_del}")
                 except Exception as e:
                     st.error(f"Error deleting file: {e}")
 
 # ------------------------------
-# Upload Estimation File
+# Upload Estimation File + Matching
 # ------------------------------
 st.subheader(":page_facing_up: Upload Estimation File")
 estimation_file = st.file_uploader("Upload estimation request (.xlsx)", type=["xlsx"], key="est_file")
 
-# Explicit action to run matching (prevents “need to refresh”)
+# Company & client selection inputs shown near the match button
+# load dynamic companies/clients after possible changes
+companies = load_json_safe(companies_path, [])
+clients = load_json_safe(clients_path, [])
+
+# company selection: default or first
+default_company = load_json_safe(os.path.join(user_folder, "default_company.json"), {}).get("default","")
+company_names = [c["name"] for c in companies] if companies else []
+selected_company = None
+if company_names:
+    if default_company and default_company in company_names:
+        selected_company = st.selectbox("Select company", company_names, index=company_names.index(default_company))
+    else:
+        selected_company = st.selectbox("Select company", ["(no default)"] + company_names)
+else:
+    st.info("No companies defined. Add one in the sidebar under Company & Client management.")
+    selected_company = None
+
+# client selection + inline add
+client_names = [c["name"] for c in clients] if clients else []
+client_col1, client_col2 = st.columns([3,1])
+with client_col1:
+    if client_names:
+        selected_client = st.selectbox("Select client", ["(none)"] + client_names)
+    else:
+        selected_client = None
+with client_col2:
+    new_client_inline = st.text_input("Add client", key="inline_client")
+    if st.button("Save client"):
+        val = new_client_inline.strip()
+        if val:
+            clients.append({"name": val, "contact": ""})
+            save_json_safe(clients_path, clients)
+            st.success(f"Client '{val}' saved.")
+            st.experimental_rerun()
+
 run_matching = st.button("🔎 Match now")
 
-if run_matching and estimation_file and price_list_files:
-    # -------- Estimation --------
+if run_matching:
+    if estimation_file is None:
+        st.error("Please upload an estimation file first.")
+        st.stop()
+    if not price_list_files:
+        st.error("Please upload at least one price list for your account first.")
+        st.stop()
+
+    # Read estimation
     est = pd.read_excel(estimation_file).dropna(how='all')
     est_cols = est.columns.tolist()
     if len(est_cols) < 5:
-        st.error("Estimation file must have at least 5 columns.")
+        st.error("Estimation file must have at least 5 columns (Model, Description, Specification, Unit, Quantity).")
         st.stop()
 
-    # Cleaned fields
-    base_concat_est = (
-        est[est_cols[0]].fillna('') + " " +
-        est[est_cols[1]].fillna('') + " " +
-        est[est_cols[2]].fillna('')
-    )
-    est["combined"] = base_concat_est.apply(clean)
-    # Parse main + auxiliary (E/N/+extra)
-    parsed_est = base_concat_est.apply(parse_cable_spec)
+    base_est = est[est_cols[0]].fillna('') + " " + est[est_cols[1]].fillna('') + " " + est[est_cols[2]].fillna('')
+    est["combined"] = base_est.apply(clean)
+    parsed_est = base_est.apply(parse_cable_spec)
     est["main_key"] = parsed_est.apply(lambda d: d["main_key"])
     est["aux_key"]  = parsed_est.apply(lambda d: d["aux_key"])
-    est["full_key"] = parsed_est.apply(lambda d: d["full_key"])
-    est["materials"] = base_concat_est.apply(extract_material_structure_tokens)
+    est["materials"] = base_est.apply(extract_material_structure_tokens)
 
-    # -------- Price List (DB) --------
+    # Read DB(s)
     db_frames = []
     if selected_file == "All files":
         for f in price_list_files:
@@ -269,27 +479,18 @@ if run_matching and estimation_file and price_list_files:
 
     db_cols = db.columns.tolist()
     if len(db_cols) < 6:
-        st.error("Price list file must have at least 6 columns.")
+        st.error("Price list file must have at least 6 columns (Model, Description, Spec, ..., MaterialCost, LabourCost).")
         st.stop()
 
-    base_concat_db = (
-        db[db_cols[0]].fillna('') + " " +
-        db[db_cols[1]].fillna('') + " " +
-        db[db_cols[2]].fillna('')
-    )
-    db["combined"]  = base_concat_db.apply(clean)
-    parsed_db       = base_concat_db.apply(parse_cable_spec)
+    base_db = db[db_cols[0]].fillna('') + " " + db[db_cols[1]].fillna('') + " " + db[db_cols[2]].fillna('')
+    db["combined"]  = base_db.apply(clean)
+    parsed_db = base_db.apply(parse_cable_spec)
     db["main_key"]  = parsed_db.apply(lambda d: d["main_key"])
     db["aux_key"]   = parsed_db.apply(lambda d: d["aux_key"])
-    db["full_key"]  = parsed_db.apply(lambda d: d["full_key"])
-    db["materials"] = base_concat_db.apply(extract_material_structure_tokens)
+    db["materials"] = base_db.apply(extract_material_structure_tokens)
 
-    st.caption(f"Estimation rows: {len(est)}")
-    st.caption(f"Price list rows: {len(db)} (files: {', '.join(sorted(set(db['source'])))} )")
-
-    # -------- Matching --------
+    # matching
     output_data = []
-
     for _, row in est.iterrows():
         query = row["combined"]
         q_main = row["main_key"]
@@ -301,30 +502,24 @@ if run_matching and estimation_file and price_list_files:
         best = None
         best_score = -1.0
 
-        # Stage 0: strongest filter—exact main size match first
+        # Stage 0: filter on main size if available
         c0 = db.copy()
         if q_main:
             c0 = c0[c0["main_key"] == q_main]
 
-        # scoring function: prioritize aux match, then materials, then fuzzy
         def score_row(r):
             s = 0.0
-            # aux match bonus
             if q_aux:
-                if r["aux_key"] == q_aux:
+                if r["aux_key"] == q_aux and r["aux_key"]:
                     s += 35.0
                 else:
-                    # partial credit if both have any aux (but different)
                     if r["aux_key"]:
                         s += 10.0
-            # material similarity
             mat = weighted_material_score(q_mats, r["materials"])
-            s += 0.6 * mat  # stronger weight than before
-            # fuzzy similarity
+            s += 0.6 * mat
             s += 0.4 * fuzz.token_set_ratio(query, r["combined"])
             return s
 
-        # Stage 1: try within same main size
         if not c0.empty:
             c0 = c0.copy()
             c0["score"] = c0.apply(score_row, axis=1)
@@ -333,7 +528,6 @@ if run_matching and estimation_file and price_list_files:
                 best = top.iloc[0]
                 best_score = best["score"]
 
-        # Stage 2: loosen main size (if Stage 1 failed)
         if best is None:
             c1 = db.copy()
             c1["score"] = c1.apply(score_row, axis=1)
@@ -342,23 +536,20 @@ if run_matching and estimation_file and price_list_files:
                 best = top2.iloc[0]
                 best_score = best["score"]
 
-        # Stage 3: fuzzy-only fallback
         if best is None:
             c2 = db.copy()
             c2["score"] = c2["combined"].apply(lambda x: fuzz.token_set_ratio(query, x))
             top3 = c2.sort_values("score", ascending=False).head(1)
             if not top3.empty:
                 best = top3.iloc[0]
-                best_score = best["score"]
+                best_score = top3["score"]
 
         if best is not None and best_score >= 0:
             desc_proposed = best[db_cols[1]]
             m_cost = pd.to_numeric(best[db_cols[4]], errors="coerce")
             l_cost = pd.to_numeric(best[db_cols[5]], errors="coerce")
-            # If you want to mark too-low fuzzy as unmatched, uncomment:
-            # if best_score < match_threshold:
-            #     desc_proposed = ""
-            #     m_cost = l_cost = 0
+            if pd.isna(m_cost): m_cost = 0
+            if pd.isna(l_cost): l_cost = 0
         else:
             desc_proposed = ""
             m_cost = l_cost = 0
@@ -371,17 +562,8 @@ if run_matching and estimation_file and price_list_files:
         total = amt_mat + amt_lab
 
         output_data.append([
-            row[est_cols[0]],  # Model
-            row[est_cols[1]],  # Description (requested)
-            desc_proposed,     # Description (proposed)
-            row[est_cols[2]],  # Specification
-            unit,              # Unit
-            qty,               # Quantity
-            m_cost if pd.notna(m_cost) else 0,
-            l_cost if pd.notna(l_cost) else 0,
-            amt_mat,           # Amount Material
-            amt_lab,           # Amount Labour
-            total              # Total
+            row[est_cols[0]], row[est_cols[1]], desc_proposed, row[est_cols[2]], unit, qty,
+            m_cost, l_cost, amt_mat, amt_lab, total
         ])
 
     result_df = pd.DataFrame(output_data, columns=[
@@ -390,15 +572,11 @@ if run_matching and estimation_file and price_list_files:
     ])
 
     grand_total = pd.to_numeric(result_df["Total"], errors="coerce").sum()
-    grand_row = pd.DataFrame([[''] * 10 + [grand_total]], columns=result_df.columns)
-    result_final = pd.concat([result_df, grand_row], ignore_index=True)
+    result_df.loc[len(result_df.index)] = [""] * 10 + [grand_total]
 
-    # ------------------------------
-    # Display
-    # ------------------------------
+    # display + formatting
     st.subheader(":mag: Matched Estimation")
-    display_df = result_final.copy()
-    # format numbers
+    display_df = result_df.copy()
     if "Quantity" in display_df.columns:
         display_df["Quantity"] = pd.to_numeric(display_df["Quantity"], errors="coerce").fillna(0).astype(int).map("{:,}".format)
     for col in ["Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"]:
@@ -406,23 +584,33 @@ if run_matching and estimation_file and price_list_files:
     st.dataframe(display_df, use_container_width=True)
 
     st.subheader(":x: Unmatched Rows")
-    unmatched_df = result_df[result_df["Description (proposed)"] == ""]
+    unmatched_df = result_df[result_df["Description (proposed)"] == ""
+                             ]
     if not unmatched_df.empty:
         st.dataframe(unmatched_df, use_container_width=True)
     else:
         st.info(":white_check_mark: All rows matched successfully!")
 
-    # ------------------------------
-    # Export
-    # ------------------------------
+    # export with Meta sheet (company/client info)
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-        result_final.to_excel(writer, index=False, sheet_name="Matched Results")
+        # Meta sheet
+        meta = {
+            "generated_by": username,
+            "role": role,
+            "generated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "selected_company": selected_company or "",
+            "selected_client": (selected_client if selected_client and selected_client != "(none)" else ""),
+            "price_lists_used": ", ".join(price_list_files) if price_list_files else ""
+        }
+        meta_df = pd.DataFrame(list(meta.items()), columns=["key", "value"])
+        meta_df.to_excel(writer, index=False, sheet_name="Meta")
+
+        # Matched results
+        result_df.to_excel(writer, index=False, sheet_name="Matched Results")
         if not unmatched_df.empty:
             unmatched_df.to_excel(writer, index=False, sheet_name="Unmatched Items")
 
-    st.download_button("📥 Download Cleaned Estimation File",
-                       buffer.getvalue(),
-                       file_name="Estimation_Result_BuildWise.xlsx")
+    st.download_button("📥 Download Cleaned Estimation File", buffer.getvalue(), file_name="Estimation_Result_BuildWise.xlsx")
 else:
     st.info("Upload your estimation file and price list(s), then click *Match now*.")
