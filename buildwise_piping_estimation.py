@@ -360,7 +360,7 @@ if run_matching:
         st.error("Price list file must have at least 6 columns (Model, Description, Spec, ..., MaterialCost, LabourCost).")
         st.stop()
 
-    base_db = db[db_cols[0]].fillna('') + " " + db[db_cols[1]].fillna('') + " " + db[db_cols[2]].fillna('')
+    base_db = db[db_cols[0]].fillna('').astype(str) + " " + db[db_cols[1]].fillna('').astype(str) + " " + db[db_cols[2]].fillna('').astype(str)
     db["combined"]  = base_db.apply(clean)
     db["pipe_size"]  = base_db.apply(extract_pipe_size)
     db["materials"] = base_db.apply(extract_material_tokens)
