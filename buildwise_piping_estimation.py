@@ -12,7 +12,7 @@ from rapidfuzz import fuzz
 # ------------------------------
 USERS_FILE = "users.json"
 FORM_FOLDER = "piping_shared_forms"
-REFERENCE_FILE = "piping_reference.xlsx"   # <-- the Excel you named
+REFERENCE_FILE = "piping_reference.xlsx"   # <-- place your reference file here
 
 DEFAULT_USERS = {
     "Admin123": {"password": "BuildWise2025", "role": "admin"},
@@ -45,8 +45,7 @@ USERS = load_users()
 def load_reference_table(path):
     """
     Load piping_reference.xlsx and build normalization maps:
-    - materials_set: set of canonical materials from file
-    - name_lookup: direct mapping from cleaned name -> row attributes
+    - return None if file not found or invalid
     """
     if not os.path.exists(path):
         return None
@@ -56,25 +55,20 @@ def load_reference_table(path):
     except Exception:
         return None
 
-    # Expecting four columns: name, material, size, pressure (as you described)
-    # Normalize column names and values
     ref_cols = ref.columns.tolist()
-    # Ensure we have at least 4 columns
     if len(ref_cols) < 4:
         return None
 
     ref = ref[[ref_cols[0], ref_cols[1], ref_cols[2], ref_cols[3]]].copy()
     ref.columns = ["name", "material", "size", "pressure"]
 
-    # convert to strings for safe processing
     for c in ["name", "material", "size", "pressure"]:
         ref[c] = ref[c].fillna("").astype(str)
 
-    # Build name lookup (cleaned name -> attributes)
     name_lookup = {}
     materials_set = set()
-    size_set = set()
-    pressure_set = set()
+    sizes_set = set()
+    pressures_set = set()
     for _, r in ref.iterrows():
         key = clean(r["name"])
         name_lookup[key] = {
@@ -86,16 +80,16 @@ def load_reference_table(path):
         if r["material"].strip():
             materials_set.add(r["material"].strip().upper())
         if r["size"].strip():
-            size_set.add(r["size"].strip().lower())
+            sizes_set.add(r["size"].strip().lower())
         if r["pressure"].strip():
-            pressure_set.add(r["pressure"].strip().upper())
+            pressures_set.add(r["pressure"].strip().upper())
 
     return {
         "df": ref,
         "name_lookup": name_lookup,
         "materials": materials_set,
-        "sizes": size_set,
-        "pressures": pressure_set
+        "sizes": sizes_set,
+        "pressures": pressures_set
     }
 
 # ------------------------------
@@ -103,8 +97,9 @@ def load_reference_table(path):
 # ------------------------------
 SIZE_RE = re.compile(r'\b(?:d|dn|ø|phi|φ)?\s*(\d{1,3})(?:\s*mm)?\b', flags=re.IGNORECASE)
 PRESSURE_RE = re.compile(r'\bpn\s*[-:]?\s*(\d{1,3})\b', flags=re.IGNORECASE)
+
 FITTING_KEYWORDS = [
-    "cút", "cut", "cutt", "elbow", "góc", "goc", "tee", "tê", "te", "t", "nối",
+    "cút", "cut", "elbow", "góc", "goc", "tee", "tê", "te", "t", "nối",
     "coupling", "thu", "reducer", "giảm", "giam", "bịt", "bit", "cap", "măng sông", "mang song",
     "union", "rắc co", "rac co", "flange", "bích", "bich", "adapter", "socket", "thread", "ren"
 ]
@@ -124,7 +119,6 @@ def clean(text: str) -> str:
     return s
 
 def extract_size_val(text: str):
-    """Return integer size (mm) if found, else None."""
     if text is None:
         return None
     m = SIZE_RE.search(str(text).lower())
@@ -136,7 +130,6 @@ def extract_size_val(text: str):
     return None
 
 def extract_pressure_val(text: str):
-    """Return pressure like 'PN10' normalized or '' if not found."""
     if text is None:
         return ""
     m = PRESSURE_RE.search(str(text).lower())
@@ -145,25 +138,20 @@ def extract_pressure_val(text: str):
             return "PN" + str(int(m.group(1)))
         except:
             return ""
-    # also try uppercase PN occurrences
     t = str(text).upper()
     if "PN" in t:
-        # attempt to extract numbers after PN
         m2 = re.search(r'PN\D*(\d{1,3})', t)
         if m2:
             return "PN" + str(int(m2.group(1)))
     return ""
 
 def detect_material_from_text(text: str, ref_materials=None):
-    """Try to detect canonical material (PVC/uPVC/HDPE/PPR/CPVC)"""
     t = str(text).lower()
     for m in MATERIAL_KEYWORDS:
         if m in t:
-            # normalize typical variants
             if m in ["upvc", "u-pvc"]:
                 return "UPVC"
             return m.upper()
-    # try reference materials (if provided)
     if ref_materials:
         tl = t.upper()
         for rm in ref_materials:
@@ -171,14 +159,13 @@ def detect_material_from_text(text: str, ref_materials=None):
                 return rm.upper()
     return ""
 
-def detect_type_token(text: str):
-    """Return a small set of type tokens found (e.g., 'elbow', 'tee', 'reducer')"""
+def extract_type_keywords(text: str):
     t = str(text).lower()
-    found = set()
-    for k in FITTING_KEYWORDS:
+    found = []
+    for k in TYPE_KEYWORDS:
         if k in t:
-            found.add(k)
-    return list(found)
+            found.append(k)
+    return found
 
 def is_fitting_text(text: str):
     t = str(text).lower()
@@ -188,7 +175,7 @@ def is_fitting_text(text: str):
     return False
 
 # ------------------------------
-# Weighted scoring (your weights)
+# Weighted scoring (user weights)
 # Size 30, Material 20, Pressure 15, Type 20, Fuzzy 15
 # ------------------------------
 WEIGHTS = {
@@ -199,20 +186,11 @@ WEIGHTS = {
     "fuzzy": 15.0
 }
 MIN_MATCH_SCORE = 70.0
-FALLBACK_FUZZY_MIN = 60.0  # fallback threshold for fuzzy-only
+FALLBACK_FUZZY_MIN = 60.0
 
 def compute_match_score(req_attrs, cand_attrs):
-    """
-    req_attrs / cand_attrs are dicts:
-      - size (int or None)
-      - material (str or "")
-      - pressure (str or "")
-      - type_tokens (list)
-      - combined (cleaned description)
-    Returns total score between 0..100 (weighted sum normalized)
-    """
     score = 0.0
-    # Size: exact match gives full weight
+    # Size
     if req_attrs.get("size") and cand_attrs.get("size"):
         if req_attrs["size"] == cand_attrs["size"]:
             score += WEIGHTS["size"]
@@ -226,15 +204,14 @@ def compute_match_score(req_attrs, cand_attrs):
     cd_pr = (cand_attrs.get("pressure") or "").upper()
     if rq_pr and cd_pr and rq_pr == cd_pr:
         score += WEIGHTS["pressure"]
-    # Type tokens (any overlap)
+    # Type tokens overlap
     rq_types = set([t for t in req_attrs.get("type_tokens", []) if t])
     cd_types = set([t for t in cand_attrs.get("type_tokens", []) if t])
     if rq_types and cd_types and len(rq_types & cd_types) > 0:
         score += WEIGHTS["type"]
-    # Fuzzy text similarity scaled
+    # Fuzzy similarity scaled
     fuzz_score = fuzz.token_set_ratio(req_attrs.get("combined", ""), cand_attrs.get("combined", ""))
     score += (fuzz_score / 100.0) * WEIGHTS["fuzzy"]
-    # Final score at most sum of weights (which is 100)
     return float(score)
 
 # ------------------------------
@@ -262,7 +239,7 @@ def do_logout():
     st.session_state["username"] = ""
     st.session_state["role"] = ""
 
-# Login screen
+# Login
 if not st.session_state["logged_in"]:
     st.title("📐 BuildWise - Sign in")
     with st.form("login_form", clear_on_submit=False):
@@ -281,7 +258,7 @@ if not st.session_state["logged_in"]:
 username = st.session_state["username"]
 role = st.session_state["role"]
 
-# header / logo
+# Header
 col1, col2 = st.columns([8,1])
 with col1:
     if os.path.exists("assets/logo.png"):
@@ -292,7 +269,7 @@ with col2:
         do_logout()
         st.experimental_rerun()
 
-# sidebar controls
+# Sidebar controls
 match_threshold = st.sidebar.slider("Match threshold", 0, 100, int(MIN_MATCH_SCORE),
                                     help="Minimum acceptance score for a 'good' match. Increase to be stricter.")
 st.sidebar.markdown("---")
@@ -339,9 +316,7 @@ if role == "admin":
             st.write(f"- **{u}** ({v.get('role','user')})")
     st.sidebar.markdown("---")
 
-# ------------------------------
 # Shared forms (admin uploads/downloads)
-# ------------------------------
 st.subheader(":scroll: Piping Price List and Estimation Request Form (Mẫu Bảng Giá Ống và Mẫu Yêu Cầu Vào Giá)")
 form_files = sorted(os.listdir(FORM_FOLDER))
 if role == "admin":
@@ -368,9 +343,7 @@ else:
     else:
         st.info("No shared forms available.")
 
-# ------------------------------
 # Price list upload & manage
-# ------------------------------
 st.subheader(":file_folder: Upload Price List Files (Tải lên Bảng Giá)")
 uploaded_files = st.file_uploader("Upload one or more price list Excel files (.xlsx) — Upload Price List (Tải lên Bảng Giá)", type=["xlsx"], accept_multiple_files=True, key="pl_up")
 if uploaded_files:
@@ -396,9 +369,7 @@ if price_list_files:
                 except Exception as e:
                     st.error(f"Error deleting file: {e}")
 
-# ------------------------------
 # Upload Estimation File + Matching
-# ------------------------------
 st.subheader(":page_facing_up: Upload Estimation File (Tải lên File Yêu Cầu Báo Giá)")
 estimation_file = st.file_uploader("Upload estimation request (.xlsx) — Upload Estimation File (Tải lên File Yêu Cầu Báo Giá)", type=["xlsx"], key="est_file")
 run_matching = st.button("🔎 Match now")
@@ -427,7 +398,6 @@ if run_matching:
 
     base_est = est[est_cols[0]].fillna('').astype(str) + " " + est[est_cols[1]].fillna('').astype(str) + " " + est[est_cols[2]].fillna('').astype(str)
     est["combined"] = base_est.apply(clean)
-    # extract structured attributes from estimation rows
     est["size"] = base_est.apply(extract_size_val)
     est["pressure"] = base_est.apply(extract_pressure_val)
     est["material"] = base_est.apply(lambda x: detect_material_from_text(x, ref_materials=reference["materials"] if reference else None))
@@ -463,24 +433,21 @@ if run_matching:
     db["type_tokens"] = base_db.apply(extract_type_keywords)
     db["is_fitting"] = db["combined"].apply(is_fitting_text)
 
-    # If reference exists, override candidate attributes when exact name matches reference name
+    # If reference exists, prefer reference attributes for DB when name matches
     if reference:
         name_lookup = reference["name_lookup"]
         for idx, r in db.iterrows():
             k = r["combined"]
             if k in name_lookup:
                 info = name_lookup[k]
-                # prefer reference attributes when available
                 if info.get("material"):
                     db.at[idx, "material"] = info["material"].upper()
-                # try to parse size from reference size_raw
                 try:
                     s = extract_size_val(info.get("size_raw", ""))
                     if s:
                         db.at[idx, "size"] = s
                 except:
                     pass
-                # parse pressure
                 p = extract_pressure_val(info.get("pressure_raw", ""))
                 if p:
                     db.at[idx, "pressure"] = p
@@ -502,44 +469,36 @@ if run_matching:
         best = None
         best_score = -1.0
 
-        # Candidate set: prefer rows with category keywords if any exist
-        candidates = db.copy()
-        if not db[db["combined"].apply(lambda x: any(k in x for k in (PIPE_KEYWORDS + FITTING_KEYWORDS)))].empty:
-            # prefer rows that contain category keywords
-            pref = db[db["combined"].apply(lambda x: any(k in x for k in (PIPE_KEYWORDS + FITTING_KEYWORDS)))]
-            if not pref.empty:
-                candidates = pref.copy()
-
-        # Compute scores for each candidate
-        def cand_attrs_from_row(r):
-            return {
-                "combined": r["combined"],
-                "size": r.get("size"),
-                "material": r.get("material") or "",
-                "pressure": r.get("pressure") or "",
-                "type_tokens": r.get("type_tokens") or []
-            }
+        # Candidate set: prefer rows that include pipe/fitting keywords
+        pref_mask = db["combined"].apply(lambda x: any(k in x for k in (PIPE_KEYWORDS + FITTING_KEYWORDS)))
+        if not db[pref_mask].empty:
+            candidates = db[pref_mask].copy()
+        else:
+            candidates = db.copy()
 
         cand_scores = []
         for idx, cand in candidates.iterrows():
-            c_attrs = cand_attrs_from_row(cand)
+            c_attrs = {
+                "combined": cand["combined"],
+                "size": cand.get("size"),
+                "material": cand.get("material") or "",
+                "pressure": cand.get("pressure") or "",
+                "type_tokens": cand.get("type_tokens") or []
+            }
             s = compute_match_score(req_attrs, c_attrs)
-            cand_scores.append((s, idx, cand, c_attrs))
+            cand_scores.append((s, idx, cand))
 
-        # pick best candidate
         if cand_scores:
             cand_scores.sort(key=lambda x: x[0], reverse=True)
-            top_score, top_idx, top_row, top_attrs = cand_scores[0]
+            top_score, top_idx, top_row = cand_scores[0]
             if top_score >= match_threshold:
                 best = top_row
                 best_score = top_score
             else:
-                # fallback: allow fuzzy-only best if above fallback fuzzy min
-                if top_score < match_threshold and top_score >= FALLBACK_FUZZY_MIN:
+                if top_score >= FALLBACK_FUZZY_MIN:
                     best = top_row
                     best_score = top_score
 
-        # If still no candidate, try full DB fuzzy search
         if best is None:
             db_f = db.copy()
             db_f["fuzz"] = db_f["combined"].apply(lambda x: fuzz.token_set_ratio(query, x))
