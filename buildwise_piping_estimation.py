@@ -8,20 +8,16 @@ from io import BytesIO
 from rapidfuzz import fuzz
 
 # ------------------------------
-# Config / Files
+# Config / Files & Users
 # ------------------------------
 USERS_FILE = "users.json"
 FORM_FOLDER = "piping_shared_forms"
-REFERENCE_FILE = "piping_reference.xlsx"   # <-- place your reference file here
 
 DEFAULT_USERS = {
     "Admin123": {"password": "BuildWise2025", "role": "admin"},
     "User123": {"password": "User2025", "role": "user"}
 }
 
-# ------------------------------
-# Users persistence
-# ------------------------------
 def load_users():
     if os.path.exists(USERS_FILE):
         try:
@@ -40,88 +36,67 @@ def save_users(users):
 USERS = load_users()
 
 # ------------------------------
-# Reference loader (dynamic)
+# Built-in dictionaries (English + Vietnamese tokens)
+# These replace the external reference file — they are derived from your excel
+# and expanded to include common synonyms and variations.
 # ------------------------------
-def load_reference_table(path):
-    """
-    Load piping_reference.xlsx and build normalization maps:
-    - return None if file not found or invalid
-    """
-    if not os.path.exists(path):
-        return None
 
-    try:
-        ref = pd.read_excel(path).dropna(how="all")
-    except Exception:
-        return None
+# Material tokens (normalized -> canonical)
+MATERIAL_LOOKUP = {
+    "pvc": "PVC", "upvc": "UPVC", "u-pvc": "UPVC", "u pvc": "UPVC",
+    "hdpe": "HDPE", "ppr": "PPR", "cpvc": "CPVC",
+    "inox": "INOX", "stainless": "INOX", "stainless steel": "INOX",
+    "gi": "GI", "galvanized": "GI", "galvanised": "GI",
+    "đồng": "CU", "dong": "CU", "cu": "CU", "copper": "CU",
+    "steel": "STEEL", "thép": "STEEL", "thep": "STEEL"
+}
 
-    ref_cols = ref.columns.tolist()
-    if len(ref_cols) < 4:
-        return None
-
-    ref = ref[[ref_cols[0], ref_cols[1], ref_cols[2], ref_cols[3]]].copy()
-    ref.columns = ["name", "material", "size", "pressure"]
-
-    for c in ["name", "material", "size", "pressure"]:
-        ref[c] = ref[c].fillna("").astype(str)
-
-    name_lookup = {}
-    materials_set = set()
-    sizes_set = set()
-    pressures_set = set()
-    for _, r in ref.iterrows():
-        key = clean(r["name"])
-        name_lookup[key] = {
-            "name": r["name"],
-            "material": r["material"].strip(),
-            "size_raw": r["size"].strip(),
-            "pressure_raw": r["pressure"].strip()
-        }
-        if r["material"].strip():
-            materials_set.add(r["material"].strip().upper())
-        if r["size"].strip():
-            sizes_set.add(r["size"].strip().lower())
-        if r["pressure"].strip():
-            pressures_set.add(r["pressure"].strip().upper())
-
-    return {
-        "df": ref,
-        "name_lookup": name_lookup,
-        "materials": materials_set,
-        "sizes": sizes_set,
-        "pressures": pressures_set
-    }
-
-# ------------------------------
-# Text cleaning and token extraction
-# ------------------------------
-SIZE_RE = re.compile(r'\b(?:d|dn|ø|phi|φ)?\s*(\d{1,3})(?:\s*mm)?\b', flags=re.IGNORECASE)
-PRESSURE_RE = re.compile(r'\bpn\s*[-:]?\s*(\d{1,3})\b', flags=re.IGNORECASE)
-
+# Fitting keywords (eng + viet)
 FITTING_KEYWORDS = [
-    "cút", "cut", "elbow", "góc", "goc", "tee", "tê", "te", "t", "nối",
-    "coupling", "thu", "reducer", "giảm", "giam", "bịt", "bit", "cap", "măng sông", "mang song",
-    "union", "rắc co", "rac co", "flange", "bích", "bich", "adapter", "socket", "thread", "ren"
+    "elbow", "cút", "cut", "góc", "goc", "bend",
+    "tee", "tê", "t", "te",
+    "reducer", "giảm", "giam", "reduction", "reducing",
+    "coupling", "nối", "noi", "coupler", "măng sông", "mang song",
+    "union", "rắc co", "rac co", "rắc_co",
+    "cap", "bịt", "bit", "plug",
+    "flange", "bích", "bich", "adapter", "nẹp",
+    "socket", "socketed", "thread", "ren", "male", "female", "threaded"
 ]
-PIPE_KEYWORDS = ["ống", "ong", "pipe", "ống nước", "ống dẫn"]
 
-MATERIAL_KEYWORDS = ["pvc", "upvc", "u-pvc", "hdpe", "ppr", "cpvc"]
+# Pipe keywords (eng + viet)
+PIPE_KEYWORDS = [
+    "pipe", "ống", "ong", "ống nước", "ống dẫn", "ong nuoc", "ong dan"
+]
 
-TYPE_KEYWORDS = ["90", "45", "angle", "ren", "thread", "socket", "socketed", "male", "female"]
+# Pressure and schedule patterns (we normalize to PNxx where possible)
+# We'll detect "PN10", "PN16", "PN6", or "SCH" patterns if present
+PRESSURE_PATTERN = re.compile(r'\bpn[-:\s]*?(\d{1,3})\b', flags=re.IGNORECASE)
+SCH_PATTERN = re.compile(r'\bsch\s*?(\d{1,3})\b', flags=re.IGNORECASE)
 
+# Size regex: accept D25, Ø25, DN50, 25mm, phi32, 20
+SIZE_RE = re.compile(r'\b(?:d|dn|ø|phi|φ)?\s*(\d{1,3})(?:\s*mm)?\b', flags=re.IGNORECASE)
+
+# Type tokens (angles, connection types)
+TYPE_TOKENS = ["90", "45", "angle", "ren", "thread", "socket", "glue", "weld", "hàn", "han", "butt", "male", "female"]
+
+# ------------------------------
+# Helper functions: cleaning & extraction
+# ------------------------------
 def clean(text: str) -> str:
     if text is None:
         return ""
-    s = str(text).lower()
-    s = s.replace("(", " ").replace(")", " ").replace("/", " ")
-    s = s.replace("-", " ").replace(",", " ").replace(".", " ")
+    s = str(text)
+    s = s.replace("(", " ").replace(")", " ").replace("/", " ").replace(",", " ")
+    s = s.replace("-", " ").replace(".", " ")
     s = re.sub(r"\s+", " ", s).strip()
-    return s
+    return s.lower()
 
 def extract_size_val(text: str):
+    """Return integer size in mm if found, else None (strict numeric)."""
     if text is None:
         return None
-    m = SIZE_RE.search(str(text).lower())
+    s = str(text)
+    m = SIZE_RE.search(s)
     if m:
         try:
             return int(m.group(1))
@@ -130,52 +105,62 @@ def extract_size_val(text: str):
     return None
 
 def extract_pressure_val(text: str):
+    """Normalize pressure like 'PN10' or return ''."""
     if text is None:
         return ""
-    m = PRESSURE_RE.search(str(text).lower())
+    t = str(text)
+    m = PRESSURE_PATTERN.search(t)
     if m:
         try:
             return "PN" + str(int(m.group(1)))
         except:
-            return ""
-    t = str(text).upper()
-    if "PN" in t:
-        m2 = re.search(r'PN\D*(\d{1,3})', t)
-        if m2:
-            return "PN" + str(int(m2.group(1)))
+            pass
+    m2 = SCH_PATTERN.search(t)
+    if m2:
+        # convert SCH to string label (we keep as SCHxx)
+        return "SCH" + m2.group(1)
+    # try uppercase direct PN mention
+    up = t.upper()
+    if "PN" in up:
+        m3 = re.search(r'PN\D*(\d{1,3})', up)
+        if m3:
+            return "PN" + m3.group(1)
     return ""
 
-def detect_material_from_text(text: str, ref_materials=None):
-    t = str(text).lower()
-    for m in MATERIAL_KEYWORDS:
-        if m in t:
-            if m in ["upvc", "u-pvc"]:
-                return "UPVC"
-            return m.upper()
-    if ref_materials:
-        tl = t.upper()
-        for rm in ref_materials:
-            if rm.lower() in t:
-                return rm.upper()
-    return ""
-
-def extract_type_keywords(text: str):
-    t = str(text).lower()
-    found = []
-    for k in TYPE_KEYWORDS:
+def detect_material_from_text(text: str):
+    """Find canonical material from text using MATERIAL_LOOKUP keys."""
+    if text is None:
+        return ""
+    t = text.lower()
+    for k, v in MATERIAL_LOOKUP.items():
         if k in t:
-            found.append(k)
+            return v
+    return ""
+
+def detect_type_tokens(text: str):
+    t = text.lower() if text else ""
+    found = []
+    for token in TYPE_TOKENS:
+        if token in t:
+            found.append(token)
     return found
 
-def is_fitting_text(text: str):
-    t = str(text).lower()
+def contains_fitting_keyword(text: str):
+    t = text.lower() if text else ""
     for k in FITTING_KEYWORDS:
         if k in t:
             return True
     return False
 
+def contains_pipe_keyword(text: str):
+    t = text.lower() if text else ""
+    for k in PIPE_KEYWORDS:
+        if k in t:
+            return True
+    return False
+
 # ------------------------------
-# Weighted scoring (user weights)
+# Weights & scoring (as you set)
 # Size 30, Material 20, Pressure 15, Type 20, Fuzzy 15
 # ------------------------------
 WEIGHTS = {
@@ -185,41 +170,50 @@ WEIGHTS = {
     "type": 20.0,
     "fuzzy": 15.0
 }
-MIN_MATCH_SCORE = 70.0
-FALLBACK_FUZZY_MIN = 60.0
+MIN_SCORE = 70.0
+FALLBACK_FUZZY = 60.0
 
-def compute_match_score(req_attrs, cand_attrs):
+def compute_score(req, cand):
+    """
+    req / cand are dicts with keys:
+      - combined (cleaned text)
+      - size (int or None)
+      - material (canonical string or "")
+      - pressure (PNxx or "")
+      - type_tokens (list)
+    Returns weighted score 0..100
+    """
     score = 0.0
-    # Size
-    if req_attrs.get("size") and cand_attrs.get("size"):
-        if req_attrs["size"] == cand_attrs["size"]:
+    # size (strict equal)
+    if req.get("size") and cand.get("size"):
+        if req["size"] == cand["size"]:
             score += WEIGHTS["size"]
-    # Material
-    rq_mat = (req_attrs.get("material") or "").upper()
-    cd_mat = (cand_attrs.get("material") or "").upper()
-    if rq_mat and cd_mat and rq_mat == cd_mat:
+    # material exact
+    rqm = (req.get("material") or "").upper()
+    cdm = (cand.get("material") or "").upper()
+    if rqm and cdm and rqm == cdm:
         score += WEIGHTS["material"]
-    # Pressure
-    rq_pr = (req_attrs.get("pressure") or "").upper()
-    cd_pr = (cand_attrs.get("pressure") or "").upper()
-    if rq_pr and cd_pr and rq_pr == cd_pr:
+    # pressure exact
+    rqp = (req.get("pressure") or "").upper()
+    cdp = (cand.get("pressure") or "").upper()
+    if rqp and cdp and rqp == cdp:
         score += WEIGHTS["pressure"]
-    # Type tokens overlap
-    rq_types = set([t for t in req_attrs.get("type_tokens", []) if t])
-    cd_types = set([t for t in cand_attrs.get("type_tokens", []) if t])
+    # type tokens overlap
+    rq_types = set([t for t in req.get("type_tokens", []) if t])
+    cd_types = set([t for t in cand.get("type_tokens", []) if t])
     if rq_types and cd_types and len(rq_types & cd_types) > 0:
         score += WEIGHTS["type"]
-    # Fuzzy similarity scaled
-    fuzz_score = fuzz.token_set_ratio(req_attrs.get("combined", ""), cand_attrs.get("combined", ""))
-    score += (fuzz_score / 100.0) * WEIGHTS["fuzzy"]
+    # fuzzy similarity scaled
+    fuzz_score = fuzz.token_set_ratio(req.get("combined",""), cand.get("combined",""))
+    score += (fuzz_score/100.0) * WEIGHTS["fuzzy"]
     return float(score)
 
 # ------------------------------
-# Streamlit UI & matching process
+# Streamlit UI & logic (keeps app structure)
 # ------------------------------
 st.set_page_config(page_title="BuildWise Piping Estimation Tool", page_icon="📐", layout="wide")
 
-# session login state
+# session state
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
     st.session_state["username"] = ""
@@ -239,7 +233,7 @@ def do_logout():
     st.session_state["username"] = ""
     st.session_state["role"] = ""
 
-# Login
+# Login screen
 if not st.session_state["logged_in"]:
     st.title("📐 BuildWise - Sign in")
     with st.form("login_form", clear_on_submit=False):
@@ -270,7 +264,7 @@ with col2:
         st.experimental_rerun()
 
 # Sidebar controls
-match_threshold = st.sidebar.slider("Match threshold", 0, 100, int(MIN_MATCH_SCORE),
+match_threshold = st.sidebar.slider("Match threshold", 0, 100, int(MIN_SCORE),
                                     help="Minimum acceptance score for a 'good' match. Increase to be stricter.")
 st.sidebar.markdown("---")
 st.sidebar.write(f"Signed in as **{username}** ({role})")
@@ -316,8 +310,8 @@ if role == "admin":
             st.write(f"- **{u}** ({v.get('role','user')})")
     st.sidebar.markdown("---")
 
-# Shared forms (admin uploads/downloads)
-st.subheader(":scroll: Piping Price List and Estimation Request Form (Mẫu Bảng Giá Ống và Mẫu Yêu Cầu Vào Giá)")
+# Shared Forms
+st.subheader(":scroll: Price List and Estimation Request Form (Mẫu Bảng Giá và Mẫu Yêu Cầu Vào Giá)")
 form_files = sorted(os.listdir(FORM_FOLDER))
 if role == "admin":
     form_uploads = st.file_uploader("Admin: Upload form files (xlsx/xls)", type=["xlsx", "xls"], accept_multiple_files=True, key="forms_up")
@@ -374,13 +368,6 @@ st.subheader(":page_facing_up: Upload Estimation File (Tải lên File Yêu Cầ
 estimation_file = st.file_uploader("Upload estimation request (.xlsx) — Upload Estimation File (Tải lên File Yêu Cầu Báo Giá)", type=["xlsx"], key="est_file")
 run_matching = st.button("🔎 Match now")
 
-# Load reference (if available)
-reference = load_reference_table(REFERENCE_FILE)
-if reference is None:
-    st.info(f"Reference file '{REFERENCE_FILE}' not found or invalid. App will run with rule-based extraction only. To enable dynamic matching, upload {REFERENCE_FILE} to the app folder.")
-else:
-    st.write(f"Loaded reference dictionary: {len(reference['df'])} rows.")
-
 if run_matching:
     if estimation_file is None:
         st.error("Please upload an estimation file first.")
@@ -396,13 +383,14 @@ if run_matching:
         st.error("Estimation file must have at least 5 columns (Model, Description, Specification, Unit, Quantity).")
         st.stop()
 
+    # Build combined text and extract attributes
     base_est = est[est_cols[0]].fillna('').astype(str) + " " + est[est_cols[1]].fillna('').astype(str) + " " + est[est_cols[2]].fillna('').astype(str)
     est["combined"] = base_est.apply(clean)
     est["size"] = base_est.apply(extract_size_val)
     est["pressure"] = base_est.apply(extract_pressure_val)
-    est["material"] = base_est.apply(lambda x: detect_material_from_text(x, ref_materials=reference["materials"] if reference else None))
-    est["type_tokens"] = base_est.apply(extract_type_keywords)
-    est["is_fitting"] = base_est.apply(is_fitting_text)
+    est["material"] = base_est.apply(detect_material_from_text)
+    est["type_tokens"] = base_est.apply(detect_type_tokens)
+    est["is_fitting"] = base_est.apply(contains_fitting_keyword)
 
     # Read DB(s)
     db_frames = []
@@ -429,30 +417,11 @@ if run_matching:
     db["combined"]  = base_db.apply(clean)
     db["size"]  = base_db.apply(extract_size_val)
     db["pressure"] = base_db.apply(extract_pressure_val)
-    db["material"] = base_db.apply(lambda x: detect_material_from_text(x, ref_materials=reference["materials"] if reference else None))
-    db["type_tokens"] = base_db.apply(extract_type_keywords)
-    db["is_fitting"] = db["combined"].apply(is_fitting_text)
+    db["material"] = base_db.apply(detect_material_from_text)
+    db["type_tokens"] = base_db.apply(detect_type_tokens)
+    db["is_fitting"] = db["combined"].apply(contains_fitting_keyword)
 
-    # If reference exists, prefer reference attributes for DB when name matches
-    if reference:
-        name_lookup = reference["name_lookup"]
-        for idx, r in db.iterrows():
-            k = r["combined"]
-            if k in name_lookup:
-                info = name_lookup[k]
-                if info.get("material"):
-                    db.at[idx, "material"] = info["material"].upper()
-                try:
-                    s = extract_size_val(info.get("size_raw", ""))
-                    if s:
-                        db.at[idx, "size"] = s
-                except:
-                    pass
-                p = extract_pressure_val(info.get("pressure_raw", ""))
-                if p:
-                    db.at[idx, "pressure"] = p
-
-    # ------ Matching loop using weighted scoring ------
+    # Matching loop
     output_data = []
     for _, row in est.iterrows():
         query = row["combined"]
@@ -469,23 +438,21 @@ if run_matching:
         best = None
         best_score = -1.0
 
-        # Candidate set: prefer rows that include pipe/fitting keywords
+        # Prefer candidates that contain pipe/fitting keywords
         pref_mask = db["combined"].apply(lambda x: any(k in x for k in (PIPE_KEYWORDS + FITTING_KEYWORDS)))
-        if not db[pref_mask].empty:
-            candidates = db[pref_mask].copy()
-        else:
-            candidates = db.copy()
+        candidates = db[pref_mask].copy() if not db[pref_mask].empty else db.copy()
 
+        # Calculate scores
         cand_scores = []
         for idx, cand in candidates.iterrows():
-            c_attrs = {
+            cand_attrs = {
                 "combined": cand["combined"],
                 "size": cand.get("size"),
                 "material": cand.get("material") or "",
                 "pressure": cand.get("pressure") or "",
                 "type_tokens": cand.get("type_tokens") or []
             }
-            s = compute_match_score(req_attrs, c_attrs)
+            s = compute_score(req_attrs, cand_attrs)
             cand_scores.append((s, idx, cand))
 
         if cand_scores:
@@ -495,15 +462,16 @@ if run_matching:
                 best = top_row
                 best_score = top_score
             else:
-                if top_score >= FALLBACK_FUZZY_MIN:
+                if top_score >= FALLBACK_FUZZY:
                     best = top_row
                     best_score = top_score
 
+        # Fallback: global fuzzy over DB if no candidate
         if best is None:
             db_f = db.copy()
             db_f["fuzz"] = db_f["combined"].apply(lambda x: fuzz.token_set_ratio(query, x))
             top = db_f.sort_values("fuzz", ascending=False).head(1)
-            if not top.empty and top.iloc[0]["fuzz"] >= FALLBACK_FUZZY_MIN:
+            if not top.empty and top.iloc[0]["fuzz"] >= FALLBACK_FUZZY:
                 best = top.iloc[0]
                 best_score = float(top.iloc[0]["fuzz"])
 
@@ -530,7 +498,7 @@ if run_matching:
             m_cost, l_cost, amt_mat, amt_lab, total
         ])
 
-    # Build result DataFrame
+    # Result DataFrame & display
     result_df = pd.DataFrame(output_data, columns=[
         "Model", "Description (requested)", "Description (proposed)", "Specification", "Unit", "Quantity",
         "Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"
@@ -539,7 +507,6 @@ if run_matching:
     grand_total = pd.to_numeric(result_df["Total"], errors="coerce").sum()
     result_df.loc[len(result_df.index)] = [""] * 10 + [grand_total]
 
-    # Display + format
     st.subheader(":mag: Matched Estimation")
     display_df = result_df.copy()
     if "Quantity" in display_df.columns:
