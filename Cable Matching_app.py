@@ -1,4 +1,7 @@
-# buildwise_with_user_management_fixed.py
+# streamlit_estimation_app_cable_admin.py
+# BuildWise Estimation Tool - Combined single-file app
+# Includes login/users, admin form handling, per-user price lists, and improved cable matching
+
 import streamlit as st
 import pandas as pd
 import os
@@ -33,21 +36,20 @@ def save_users(users):
     with open(USERS_FILE, "w", encoding="utf-8") as f:
         json.dump(users, f, indent=2, ensure_ascii=False)
 
-# Load or create users db
 USERS = load_users()
 
 # ------------------------------
-# Utility / Parsing / Scoring
+# Parsing & scoring helpers
 # ------------------------------
-MAIN_SIZE_RE = re.compile(r'\b(\d{1,2})\s*[cC]?\s*[x×]\s*(\d{1,3}(?:\.\d+)?)\b')
-# AUX_RE captures + 1C x 50 or + E50 or +PE50 etc.
-AUX_RE = re.compile(r'\+\s*(?:([1-9]\d*)\s*[cC]?\s*[x×]\s*)?((?:pe|e|n))?(\d{1,3}(?:\.\d+)?)', flags=re.IGNORECASE)
+# Regexes for cable sizes and auxiliary (neutral/earth)
+MAIN_SIZE_RE = re.compile(r'\b(\d{1,2})\s*[cC]?\s*[x×]?\s*(\d{1,3}(?:\.\d+)?)\b')
+# matches + 1C x 50 or + E50 or + e50 or + PE50
+AUX_RE = re.compile(r'\+\s*(?:(\d{1,2})\s*[cC]?\s*[x×]?\s*(\d{1,3}(?:\.\d+)?)|([eEnNpP]{1,2})(\d{1,3}(?:\.\d+)?))', flags=re.IGNORECASE)
 
 def clean(text: str) -> str:
-    text = str(text) if text is not None else ""
+    text = str(text or "")
     text = text.lower()
     text = re.sub(r"0[,.]?6kv|1[,.]?0kv", "", text)
-    # unify mm2, spacing, punctuation
     text = text.replace("mm2", "").replace("mm²", "")
     text = text.replace("(", "").replace(")", "")
     text = text.replace("/", " ").replace(",", " ")
@@ -58,98 +60,115 @@ def clean(text: str) -> str:
 
 def parse_cable_spec(text: str) -> dict:
     """
-    Parse main cores x size and optional auxiliary (neutral/earth) patterns.
-    Returns numeric main_cores (int) and main_size (float or int),
-    aux_type (E/N/''), aux_cores (int or None), aux_size numeric, and keys.
+    Parse main cores x size and auxiliary (neutral/earth) if present.
+    Returns dict with main_cores (int), main_size (float), main_key (like '3x70'),
+    aux_type ('E' or 'N' or ''), aux_cores, aux_size, aux_key, full_key.
     """
-    s = str(text) if text is not None else ""
-    s = s.lower().replace("mm2", "").replace("mm²", "")
-    s = re.sub(r"\s+", " ", s).strip()
+    s = str(text or "").lower()
+    s = s.replace("mm2", "").replace("mm²", "")
+    s = re.sub(r"\s+", " ", s)
 
+    main_match = MAIN_SIZE_RE.search(s)
     main_cores = None
     main_size = None
-    main_match = MAIN_SIZE_RE.search(s)
     if main_match:
         try:
             main_cores = int(main_match.group(1))
         except:
             main_cores = None
         try:
-            main_size_val = float(main_match.group(2))
-            # convert floats that are essentially integers to int
-            if main_size_val.is_integer():
-                main_size = int(main_size_val)
-            else:
-                main_size = main_size_val
+            main_size = float(main_match.group(2))
         except:
             main_size = None
 
+    aux_match = AUX_RE.search(s)
     aux_type = ""
     aux_cores = None
     aux_size = None
-    aux_match = AUX_RE.search(s)
     if aux_match:
-        cores_str = aux_match.group(1)
-        type_str = aux_match.group(2)
-        size_str = aux_match.group(3)
-        if cores_str:
+        # group 1/2 for "1C x 50" style, group 3/4 for "E50" style
+        if aux_match.group(1) and aux_match.group(2):
             try:
-                aux_cores = int(cores_str)
+                aux_cores = int(aux_match.group(1))
             except:
                 aux_cores = None
-        if type_str:
-            t = type_str.strip().upper()
-            if t in ["E", "PE"]:
+            try:
+                aux_size = float(aux_match.group(2))
+            except:
+                aux_size = None
+        elif aux_match.group(3) and aux_match.group(4):
+            t = aux_match.group(3).strip().upper()
+            if t in ("E", "PE"):
                 aux_type = "E"
             elif t == "N":
                 aux_type = "N"
-        try:
-            aux_size_val = float(size_str)
-            aux_size = int(aux_size_val) if aux_size_val.is_integer() else aux_size_val
-        except:
-            aux_size = None
+            try:
+                aux_size = float(aux_match.group(4))
+            except:
+                aux_size = None
 
-    main_key = f"{main_cores}x{main_size}" if (main_cores is not None and main_size is not None) else ""
+    main_key = ""
+    if main_cores and main_size:
+        main_key = f"{int(main_cores)}x{int(main_size) if float(main_size).is_integer() else main_size}"
+
+    aux_key = ""
     if aux_type and aux_size:
-        aux_key = f"{aux_type}{aux_size}"
+        aux_key = f"{aux_type}{int(aux_size) if aux_size and float(aux_size).is_integer() else aux_size}"
     elif aux_cores and aux_size:
-        aux_key = f"{aux_cores}x{aux_size}"
-    else:
-        aux_key = ""
+        aux_key = f"{aux_cores}x{int(aux_size) if aux_size and float(aux_size).is_integer() else aux_size}"
 
-    full_key = f"{main_key}+{aux_key}" if main_key and aux_key else main_key
+    full_key = f"{main_key}+{aux_key}" if main_key and aux_key else main_key or aux_key
 
     return {
         "main_cores": main_cores,
         "main_size": main_size,
+        "main_key": main_key,
         "aux_type": aux_type,
         "aux_cores": aux_cores,
         "aux_size": aux_size,
-        "main_key": main_key,
         "aux_key": aux_key,
         "full_key": full_key
     }
 
-def extract_material_structure_tokens(text: str):
-    text = str(text) if text is not None else ""
-    tokens = re.findall(r'(cu|aluminium|al|xlpe|pvc|pe|lszh|hdpe)', text.lower())
+def extract_material_tokens(text: str):
+    """
+    Extract normalized material/insulation tokens from text.
+    Normalizes 'aluminium'->'al'
+    """
+    s = str(text or "").lower()
+    tokens = re.findall(r'\b(cu|aluminium|al|xlpe|pvc|pe|lszh|hdpe|dsta|tape|shield|armour|armored|swa)\b', s)
     norm = []
     for t in tokens:
         if t == "aluminium":
             norm.append("al")
+        elif t in ("armour", "armored", "swa"):
+            norm.append("armored")
+        elif t == "dsta":
+            norm.append("dsta")
         else:
             norm.append(t)
-    return norm
+    return list(dict.fromkeys(norm))  # unique preserve order
+
+def extract_voltage(text: str):
+    s = str(text or "").lower()
+    # detect 0.6/1kv or 0.6kv / 1kv etc.
+    if re.search(r'\b0[.,]?6[ /-]?1[.,]?0?k?[v]?\b', s):
+        return "0.6/1kV"
+    if re.search(r'\b0[.,]?6k?v\b', s):
+        return "0.6kV"
+    if re.search(r'\b1[.,]?0k?v\b', s):
+        return "1.0kV"
+    return ""
 
 def weighted_material_score(query_tokens, target_tokens) -> float:
     """
-    Weighted overlap score between query and target material tokens.
-    Returns a 0-100 score.
+    Return 0-100 score comparing material/insulation layers using tuned weights.
     """
     weights = {
         'cu': 1.0, 'al': 1.0,
-        'xlpe': 0.85, 'pvc': 0.65,
-        'lszh': 0.6, 'pe': 0.5, 'hdpe': 0.5
+        'xlpe': 0.9, 'pvc': 0.7,
+        'lszh': 0.6, 'pe': 0.5, 'hdpe': 0.5,
+        'armored': 0.8, 'dsta': 0.5, 'tape': 0.3, 'shield': 0.4
     }
     all_keys = set(query_tokens) | set(target_tokens)
     if not all_keys:
@@ -161,10 +180,16 @@ def weighted_material_score(query_tokens, target_tokens) -> float:
             score += weights.get(k, 0.3)
     return (score / max_score) * 100.0
 
+def contains_category_keyword(text: str):
+    s = str(text or "").lower()
+    keys = ["cáp", "cable", "dây", "dây điện", "cable", "cáp điện"]
+    return any(k in s for k in keys)
+
 # ------------------------------
-# Streamlit: Login & session state
+# Streamlit login & session
 # ------------------------------
 st.set_page_config(page_title="BuildWise", page_icon="📐", layout="wide")
+
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
     st.session_state["username"] = ""
@@ -172,10 +197,11 @@ if "logged_in" not in st.session_state:
 
 def do_login(user: str, pwd: str):
     user = (user or "").strip()
-    if user in USERS and USERS[user]["password"] == pwd:
+    users = load_users()
+    if user in users and users[user]["password"] == pwd:
         st.session_state["logged_in"] = True
         st.session_state["username"] = user
-        st.session_state["role"] = USERS[user].get("role", "user")
+        st.session_state["role"] = users[user].get("role", "user")
         return True
     return False
 
@@ -184,7 +210,6 @@ def do_logout():
     st.session_state["username"] = ""
     st.session_state["role"] = ""
 
-# Login screen
 if not st.session_state["logged_in"]:
     st.title("📐 BuildWise - Sign in")
     with st.form("login_form", clear_on_submit=False):
@@ -200,14 +225,12 @@ if not st.session_state["logged_in"]:
                 st.error("Invalid username or password. Edit users.json to add users if needed.")
     st.stop()
 
-# After login: main app
 username = st.session_state["username"]
 role = st.session_state["role"]
 
-# Layout header
+# Header and logout
 col1, col2 = st.columns([8,1])
 with col1:
-    # logo (keep your assets/logo.png)
     if os.path.exists("assets/logo.png"):
         st.image("assets/logo.png", width=120)
     st.markdown("## :triangular_ruler: BuildWise - Smart Estimation Tool")
@@ -216,19 +239,19 @@ with col2:
         do_logout()
         st.experimental_rerun()
 
-# Sidebar controls
-match_threshold = st.sidebar.slider("Match threshold", 0, 100, 70,
+# Sidebar: match threshold and admin controls
+match_threshold = st.sidebar.slider("Match threshold (0-100)", 0, 100, 75,
                                     help="Minimum acceptance score for a 'good' match. Increase to be stricter.")
 st.sidebar.markdown("---")
-st.sidebar.write(f"Signed in as {username} ({role})")
+st.sidebar.write(f"Signed in as *{username}* ({role})")
 
-# Ensure folders exist
+# Ensure folders
 user_folder = f"user_data/{username}"
 os.makedirs(user_folder, exist_ok=True)
 os.makedirs(FORM_FOLDER, exist_ok=True)
 
 # ------------------------------
-# Admin: manage users UI
+# Admin: user management UI
 # ------------------------------
 if role == "admin":
     st.sidebar.markdown("### 🔧 Admin - User management")
@@ -262,7 +285,7 @@ if role == "admin":
         st.markdown("---")
         st.write("Current users:")
         for u, v in users.items():
-            st.write(f"- {u} ({v.get('role','user')})")
+            st.write(f"- *{u}* ({v.get('role','user')})")
     st.sidebar.markdown("---")
 
 # ------------------------------
@@ -349,12 +372,9 @@ if run_matching:
     parsed_est = base_est.apply(parse_cable_spec)
     est["main_key"] = parsed_est.apply(lambda d: d["main_key"])
     est["aux_key"]  = parsed_est.apply(lambda d: d["aux_key"])
-    # store numeric columns for robust numeric comparison
-    est["main_cores"] = parsed_est.apply(lambda d: d["main_cores"])
-    est["main_size"] = parsed_est.apply(lambda d: d["main_size"])
-    est["aux_type"]  = parsed_est.apply(lambda d: d["aux_type"])
-    est["aux_size"]  = parsed_est.apply(lambda d: d["aux_size"])
-    est["materials"] = base_est.apply(extract_material_structure_tokens)
+    est["materials"] = base_est.apply(extract_material_tokens)
+    est["voltage"] = base_est.apply(extract_voltage)
+    est["has_keyword"] = base_est.apply(contains_category_keyword)
 
     # Read DB(s)
     db_frames = []
@@ -382,80 +402,104 @@ if run_matching:
     parsed_db = base_db.apply(parse_cable_spec)
     db["main_key"]  = parsed_db.apply(lambda d: d["main_key"])
     db["aux_key"]   = parsed_db.apply(lambda d: d["aux_key"])
-    db["main_cores"] = parsed_db.apply(lambda d: d["main_cores"])
-    db["main_size"]  = parsed_db.apply(lambda d: d["main_size"])
-    db["aux_type"]   = parsed_db.apply(lambda d: d["aux_type"])
-    db["aux_size"]   = parsed_db.apply(lambda d: d["aux_size"])
-    db["materials"] = base_db.apply(extract_material_structure_tokens)
+    db["materials"] = base_db.apply(extract_material_tokens)
+    db["voltage"] = base_db.apply(extract_voltage)
+    db["has_keyword"] = base_db.apply(contains_category_keyword)
 
-    # matching
+    # Matching procedure
     output_data = []
     for _, row in est.iterrows():
         query = row["combined"]
-        q_main_cores = row.get("main_cores", None)
-        q_main_size = row.get("main_size", None)
-        q_aux = row.get("aux_key", "")
-        q_mats = row.get("materials", [])
+        q_main = row["main_key"]
+        q_aux  = row["aux_key"]
+        q_mats = row["materials"]
+        q_volt = row["voltage"]
+        q_keyword = row["has_keyword"]
         unit = row[est_cols[3]]
         qty  = row[est_cols[4]]
 
         best = None
         best_score = -1.0
 
-        # Stage 0: numeric filter on main cores & size if both available
-        c0 = db.copy()
-        if q_main_cores is not None and q_main_size is not None:
-            # numeric equality comparison
-            c0 = c0[(c0["main_cores"] == q_main_cores) & (c0["main_size"] == q_main_size)]
-
-        def score_row(r):
-            # score 0-100 scale
-            s = 0.0
-            # auxiliary match strong preference
-            if q_aux:
-                if r.get("aux_key", "") == q_aux and r.get("aux_key", ""):
-                    s += 30.0
+        # scoring helpers
+        def compute_score(r):
+            # material 40%, size 40%, voltage 10%, category keyword 10%
+            score = 0.0
+            # material contribution
+            mat_score = weighted_material_score(q_mats or [], r["materials"] or [])
+            score += 0.40 * mat_score  # contributes up to 40
+            # size contribution
+            if q_main and r.get("main_key"):
+                if q_main == r.get("main_key"):
+                    score += 40.0  # full 40
                 else:
-                    if r.get("aux_key", ""):
-                        s += 8.0
-            # material weighted score (0-100) weighted big
-            mat = weighted_material_score(q_mats, r.get("materials", []))
-            s += 0.7 * mat  # contributes up to 70
-            # fuzzy text similarity contributes up to 30
-            s += 0.3 * fuzz.token_set_ratio(query or "", r.get("combined", ""))
-            return s
+                    # partial size similarity — compare numeric parts (cores or size)
+                    # fallback: if main_cores equal OR main_size equal within small tolerance
+                    try:
+                        qcores, qsize = (int(q_main.split("x")[0]), float(q_main.split("x")[1]))
+                        rcores, rsize = (int(r["main_key"].split("x")[0]), float(r["main_key"].split("x")[1]))
+                        cores_match = 1 if qcores == rcores else 0
+                        size_match = 1 if abs(qsize - rsize) <= 0.0001 else 0
+                        partial = (cores_match + size_match) / 2.0
+                        score += 40.0 * partial
+                    except Exception:
+                        # no numeric comparison possible -> no size credit
+                        pass
+            else:
+                # no main size: give 0 size credit here
+                pass
+            # voltage
+            if q_volt and r.get("voltage"):
+                if q_volt == r.get("voltage"):
+                    score += 10.0
+            # category keyword
+            if q_keyword and r.get("has_keyword"):
+                score += 10.0
+            return score
 
-        # Try filtered set first
+        # Stage A: if q_main exists, filter DB by same main_key first for speed
+        c0 = db.copy()
+        if q_main:
+            c0 = c0[c0["main_key"] == q_main]
         if not c0.empty:
             c0 = c0.copy()
-            c0["score"] = c0.apply(score_row, axis=1)
+            c0["score"] = c0.apply(lambda r: compute_score(r), axis=1)
             top = c0.sort_values("score", ascending=False).head(1)
-            if not top.empty and top.iloc[0]["score"] >= match_threshold:
+            if not top.empty and float(top.iloc[0]["score"]) >= match_threshold:
                 best = top.iloc[0]
                 best_score = best["score"]
 
-        # If no good match, evaluate whole DB with full scoring
+        # Stage B: if no good match found, compute score across whole DB using scoring function
         if best is None:
             c1 = db.copy()
-            c1["score"] = c1.apply(score_row, axis=1)
-            top2 = c1.sort_values("score", ascending=False).head(1)
-            if not top2.empty and top2.iloc[0]["score"] >= match_threshold:
-                best = top2.iloc[0]
-                best_score = best["score"]
+            c1 = c1.copy()
+            c1["score"] = c1.apply(lambda r: compute_score(r), axis=1)
+            top2 = c1.sort_values("score", ascending=False).head(3)
+            if not top2.empty:
+                if float(top2.iloc[0]["score"]) >= match_threshold:
+                    best = top2.iloc[0]
+                    best_score = best["score"]
 
-        # As final fallback, use pure fuzzy (no material weighting)
+        # Stage C: final fallback to fuzzy token match (only if still no match)
         if best is None:
             c2 = db.copy()
-            c2["score"] = c2["combined"].apply(lambda x: fuzz.token_set_ratio(query or "", x))
-            top3 = c2.sort_values("score", ascending=False).head(1)
-            if not top3.empty:
+            c2["fuzz"] = c2["combined"].apply(lambda x: fuzz.token_set_ratio(query, x))
+            top3 = c2.sort_values("fuzz", ascending=False).head(1)
+            if not top3.empty and float(top3.iloc[0]["fuzz"]) >= max(50, match_threshold - 10):  # looser fallback
                 best = top3.iloc[0]
-                best_score = best["score"]
+                # create a synthetic score mapping fuzz 0-100 to 0-100
+                best_score = float(top3.iloc[0]["fuzz"])
 
         if best is not None and best_score >= 0:
             desc_proposed = best[db_cols[1]]
-            m_cost = pd.to_numeric(best[db_cols[4]], errors="coerce")
-            l_cost = pd.to_numeric(best[db_cols[5]], errors="coerce")
+            try:
+                m_cost = pd.to_numeric(best[db_cols[4]], errors="coerce")
+            except Exception:
+                m_cost = 0
+            try:
+                l_cost = pd.to_numeric(best[db_cols[5]], errors="coerce")
+            except Exception:
+                l_cost = 0
             if pd.isna(m_cost): m_cost = 0
             if pd.isna(l_cost): l_cost = 0
         else:
@@ -479,6 +523,7 @@ if run_matching:
         "Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"
     ])
 
+    # grand total row
     grand_total = pd.to_numeric(result_df["Total"], errors="coerce").sum()
     result_df.loc[len(result_df.index)] = [""] * 10 + [grand_total]
 
@@ -507,4 +552,4 @@ if run_matching:
             unmatched_df.to_excel(writer, index=False, sheet_name="Unmatched Items")
     st.download_button("📥 Download Cleaned Estimation File", buffer.getvalue(), file_name="Estimation_Result_BuildWise.xlsx")
 else:
-    st.info("Upload your estimation file and price list(s), then click Match now.")
+    st.info("Upload your estimation file and price list(s), then click *Match now*.")
