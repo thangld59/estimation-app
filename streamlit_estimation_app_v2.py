@@ -1,5 +1,12 @@
-# streamlit_estimation_app_full.py
-# BuildWise - Full ready-to-run Streamlit app (cable matching improved + admin user management)
+# streamlit_estimation_app_full_fixed.py
+# BuildWise - Complete ready-to-run Streamlit app
+# Features:
+# - Login / user management (users.json)
+# - Admin (Admin123) can upload/delete shared forms and manage users
+# - Per-user price list upload / delete
+# - Cable matching with improved logic: size, cores (E/N), material structure weighted scoring
+# - Adjustable match threshold (sidebar)
+# - Export matched / unmatched to Excel
 
 import streamlit as st
 import pandas as pd
@@ -20,6 +27,7 @@ DEFAULT_USERS = {
     "User123": {"password": "User2025", "role": "user"}
 }
 
+
 def load_users():
     if os.path.exists(USERS_FILE):
         try:
@@ -30,6 +38,7 @@ def load_users():
     else:
         save_users(DEFAULT_USERS)
         return DEFAULT_USERS.copy()
+
 
 def save_users(users):
     with open(USERS_FILE, "w", encoding="utf-8") as f:
@@ -42,11 +51,13 @@ USERS = load_users()
 # Utility / Parsing / Scoring
 # ------------------------------
 MAIN_SIZE_RE = re.compile(r'\b(\d{1,2})\s*[cC]?\s*[x×]\s*(\d{1,3}(?:\.\d+)?)\b')
-# Auxiliary pattern: "+ 1C x 50", "+ E50", "+ e50", "+2cx6", "+ 1x50"
-AUX_RE = re.compile(r'\+\s*(?:([1-9]\d*)\s*[cC]?\s*[x×]\s*)?([eEnN]|(?:pe|e))?(\d{1,3}(?:\.\d+)?)', flags=re.IGNORECASE)
+AUX_RE = re.compile(r'\+\s*(?:([1-9]\d*)\s*[cC]?\s*[x×]\s*)?((?:pe|e|n))?(\d{1,3}(?:\.\d+)?)', flags=re.IGNORECASE)
+
+MATERIAL_TOKEN_RE = re.compile(r'(cu|aluminium|al|xlpe|pvc|pe|lszh|hdpe|dsta|sta|swa)', flags=re.IGNORECASE)
+
 
 def clean(text: str) -> str:
-    text = str(text or "").lower()
+    text = str(text).lower()
     text = re.sub(r"0[,.]?6kv|1[,.]?0kv", "", text)
     text = text.replace("mm2", "").replace("mm²", "")
     text = text.replace("(", "").replace(")", "")
@@ -56,12 +67,10 @@ def clean(text: str) -> str:
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
+
 def parse_cable_spec(text: str) -> dict:
-    """
-    Parse a cable specification string to extract main cores x size, and auxiliary (E/N or extra cores).
-    Returns dictionary with main_cores, main_size, aux_type (E/N), aux_cores, aux_size, main_key, aux_key, full_key
-    """
-    text = str(text or "").lower().replace("mm2", "").replace("mm²", "")
+    """Extract main cores & size and auxiliary (E/N or extra cores) from a cable description."""
+    text = str(text).lower().replace("mm2", "").replace("mm²", "")
     text = re.sub(r"\s+", " ", text)
 
     main_match = MAIN_SIZE_RE.search(text)
@@ -92,7 +101,7 @@ def parse_cable_spec(text: str) -> dict:
                 aux_cores = None
 
         if type_str:
-            t = (type_str or "").strip().upper()
+            t = type_str.strip().upper()
             if t in ["E", "PE"]:
                 aux_type = "E"
             elif t == "N":
@@ -103,7 +112,11 @@ def parse_cable_spec(text: str) -> dict:
         except:
             aux_size = None
 
-    main_key = f"{int(main_cores)}x{int(main_size) if main_size and float(main_size).is_integer() else main_size}" if main_cores and main_size else ""
+    main_key = (
+        f"{int(main_cores)}x{int(main_size) if main_size and float(main_size).is_integer() else main_size}"
+        if main_cores and main_size else ""
+    )
+
     if aux_type and aux_size:
         aux_key = f"{aux_type}{int(aux_size) if aux_size and float(aux_size).is_integer() else aux_size}"
     elif aux_cores and aux_size:
@@ -123,32 +136,99 @@ def parse_cable_spec(text: str) -> dict:
         "full_key": full_key
     }
 
+
 def extract_material_structure_tokens(text: str):
-    text = str(text or "").lower()
-    tokens = re.findall(r'(cu|aluminium|al|xlpe|pvc|pe|lszh|hdpe)', text)
+    text = str(text).lower()
+    tokens = MATERIAL_TOKEN_RE.findall(text)
     norm = []
     for t in tokens:
-        if t == "aluminium":
-            norm.append("al")
+        tt = t.lower()
+        if tt == 'aluminium':
+            norm.append('al')
         else:
-            norm.append("al" if t == "aluminium" else t)
+            norm.append(tt)
     return norm
 
-def weighted_material_score(query_tokens, target_tokens) -> float:
+
+def material_structure_score(query_tokens, target_tokens):
+    """Compute similarity score for material layers.
+    Penalise extra layers in target not present in query and reward exact layer matches.
+    Returns 0..100
+    """
+    if not query_tokens and not target_tokens:
+        return 100.0
+    if not query_tokens or not target_tokens:
+        return 0.0
+
+    # weights for tokens
     weights = {
         'cu': 1.0, 'al': 1.0,
-        'xlpe': 0.8, 'pvc': 0.6,
-        'lszh': 0.6, 'pe': 0.5, 'hdpe': 0.5
+        'xlpe': 0.9, 'pvc': 0.7,
+        'lszh': 0.6, 'pe': 0.5, 'hdpe': 0.5,
+        'dsta': 0.4, 'sta': 0.4, 'swa': 0.4
     }
-    all_keys = set(query_tokens) | set(target_tokens)
-    if not all_keys:
-        return 0.0
-    max_score = sum(weights.get(k, 0.3) for k in all_keys)
-    score = 0.0
+
+    q_set = list(dict.fromkeys(query_tokens))
+    t_set = list(dict.fromkeys(target_tokens))
+
+    match_score = 0.0
+    possible_score = 0.0
+
+    # Consider order-insensitive matching but penalize extras
+    all_keys = list(dict.fromkeys(q_set + t_set))
     for k in all_keys:
-        if (k in query_tokens) and (k in target_tokens):
-            score += weights.get(k, 0.3)
-    return (score / max_score) * 100.0
+        w = weights.get(k, 0.3)
+        possible_score += w
+        if k in q_set and k in t_set:
+            match_score += w
+        # if present only in target or only in query, no addition to match_score
+
+    base = (match_score / possible_score) * 100.0 if possible_score > 0 else 0.0
+
+    # Penalty for extra layers in target compared to query
+    extra_in_target = len([k for k in t_set if k not in q_set])
+    extra_in_query = len([k for k in q_set if k not in t_set])
+    penalty = (extra_in_target * 5.0) + (extra_in_query * 2.0)  # target extras heavier penalty
+
+    score = max(0.0, base - penalty)
+    return score
+
+
+def combined_match_score(query, q_main_key, q_aux_key, q_mats, row_combined, r_main_key, r_aux_key, r_mats, threshold, weights):
+    """Compute final combined score using weights dict:
+    weights = {'size':0.45, 'cores':0.25, 'material':0.30}
+    """
+    size_score = 0.0
+    cores_score = 0.0
+    mat_score = 0.0
+
+    # Size (main_key) exact match -> full, else partial by fuzz on main size text
+    if q_main_key and r_main_key:
+        if q_main_key == r_main_key:
+            size_score = 100.0
+        else:
+            # fuzz on the core-size substring
+            size_score = fuzz.token_set_ratio(q_main_key, r_main_key)
+    else:
+        # fallback to fuzzy on whole description
+        size_score = fuzz.partial_ratio(query, row_combined)
+
+    # Auxiliary / cores
+    if q_aux_key and r_aux_key:
+        if q_aux_key == r_aux_key:
+            cores_score = 100.0
+        else:
+            cores_score = fuzz.token_set_ratio(str(q_aux_key), str(r_aux_key))
+    else:
+        # if none provided, neutral score
+        cores_score = 100.0 if not q_aux_key and not r_aux_key else 0.0
+
+    # Material structure
+    mat_score = material_structure_score(q_mats, r_mats)
+
+    final = (weights['size'] * size_score) + (weights['cores'] * cores_score) + (weights['material'] * mat_score)
+    # Normalize to 0..100
+    return final
 
 # ------------------------------
 # Streamlit: Login & session state
@@ -159,14 +239,16 @@ if "logged_in" not in st.session_state:
     st.session_state["username"] = ""
     st.session_state["role"] = ""
 
+
 def do_login(user: str, pwd: str):
-    user = (user or "").strip()
+    user = user.strip()
     if user in USERS and USERS[user]["password"] == pwd:
         st.session_state["logged_in"] = True
         st.session_state["username"] = user
         st.session_state["role"] = USERS[user].get("role", "user")
         return True
     return False
+
 
 def do_logout():
     st.session_state["logged_in"] = False
@@ -207,6 +289,18 @@ with col2:
 # Sidebar controls
 match_threshold = st.sidebar.slider("Match threshold", 0, 100, 70,
                                     help="Minimum acceptance score for a 'good' match. Increase to be stricter.")
+# weights editable
+st.sidebar.markdown("### Matching weights")
+w_size = st.sidebar.slider("Size weight", 0.0, 1.0, 0.45, step=0.05)
+w_cores = st.sidebar.slider("Cores weight", 0.0, 1.0, 0.25, step=0.05)
+w_material = st.sidebar.slider("Material weight", 0.0, 1.0, 0.30, step=0.05)
+# normalize weights
+_total_w = w_size + w_cores + w_material
+if _total_w <= 0:
+    weights = {'size': 0.45, 'cores': 0.25, 'material': 0.30}
+else:
+    weights = {'size': w_size/_total_w, 'cores': w_cores/_total_w, 'material': w_material/_total_w}
+
 st.sidebar.markdown("---")
 st.sidebar.write(f"Signed in as *{username}* ({role})")
 
@@ -262,8 +356,11 @@ if role == "admin":
     form_uploads = st.file_uploader("Admin: Upload form files (xlsx/xls)", type=["xlsx", "xls"], accept_multiple_files=True, key="forms_up")
     if form_uploads:
         for f in form_uploads:
-            with open(os.path.join(FORM_FOLDER, f.name), "wb") as out_f:
-                out_f.write(f.read())
+            try:
+                with open(os.path.join(FORM_FOLDER, f.name), "wb") as out_f:
+                    out_f.write(f.read())
+            except Exception as e:
+                st.error(f"Error saving form file {f.name}: {e}")
         st.success("Form file(s) uploaded.")
 
     if form_files:
@@ -278,8 +375,11 @@ else:
     if form_files:
         for f in form_files:
             path = os.path.join(FORM_FOLDER, f)
-            with open(path, "rb") as fh:
-                st.download_button(f"📄 Download {f}", fh.read(), file_name=f)
+            try:
+                with open(path, "rb") as fh:
+                    st.download_button(f"📄 Download {f}", fh.read(), file_name=f)
+            except Exception:
+                continue
     else:
         st.info("No shared forms available.")
 
@@ -290,8 +390,11 @@ st.subheader(":file_folder: Upload Price List Files")
 uploaded_files = st.file_uploader("Upload one or more price list Excel files (.xlsx)", type=["xlsx"], accept_multiple_files=True, key="pl_up")
 if uploaded_files:
     for f in uploaded_files:
-        with open(os.path.join(user_folder, f.name), "wb") as out_f:
-            out_f.write(f.read())
+        try:
+            with open(os.path.join(user_folder, f.name), "wb") as out_f:
+                out_f.write(f.read())
+        except Exception as e:
+            st.error(f"Error saving price list {f.name}: {e}")
     st.success("Price list(s) uploaded.")
 
 st.subheader(":open_file_folder: Manage Price Lists")
@@ -381,42 +484,36 @@ if run_matching:
         best = None
         best_score = -1.0
 
-        # Stage 0: filter on main size if available
+        # Stage 1: filter on main size if available
         c0 = db.copy()
         if q_main:
             c0 = c0[c0["main_key"] == q_main]
 
         def score_row(r):
-            s = 0.0
-            # aux match weight
-            if q_aux:
-                if r["aux_key"] == q_aux and r["aux_key"]:
-                    s += 35.0
-                else:
-                    if r["aux_key"]:
-                        s += 10.0
-            # material weighted score
-            mat = weighted_material_score(q_mats, r["materials"])
-            s += 0.6 * mat
-            # fuzzy fallback
-            s += 0.4 * fuzz.token_set_ratio(query, r["combined"])
-            return s
+            try:
+                r_main = r.get("main_key", "")
+                r_aux = r.get("aux_key", "")
+                r_mats = r.get("materials", [])
+                score = combined_match_score(query, q_main, q_aux, q_mats, r.get("combined", ""), r_main, r_aux, r_mats, match_threshold, weights)
+                return score
+            except Exception:
+                return 0.0
 
         if not c0.empty:
             c0 = c0.copy()
             c0["score"] = c0.apply(score_row, axis=1)
             top = c0.sort_values("score", ascending=False).head(1)
-            if not top.empty and top.iloc[0]["score"] >= match_threshold:
+            if not top.empty and float(top.iloc[0]["score"]) >= match_threshold:
                 best = top.iloc[0]
-                best_score = best["score"]
+                best_score = float(best["score"])
 
         if best is None:
             c1 = db.copy()
             c1["score"] = c1.apply(score_row, axis=1)
             top2 = c1.sort_values("score", ascending=False).head(1)
-            if not top2.empty and top2.iloc[0]["score"] >= match_threshold:
+            if not top2.empty and float(top2.iloc[0]["score"]) >= match_threshold:
                 best = top2.iloc[0]
-                best_score = best["score"]
+                best_score = float(best["score"])
 
         if best is None:
             c2 = db.copy()
@@ -424,7 +521,7 @@ if run_matching:
             top3 = c2.sort_values("score", ascending=False).head(1)
             if not top3.empty:
                 best = top3.iloc[0]
-                best_score = best["score"]
+                best_score = float(best["score"])
 
         if best is not None and best_score >= 0:
             desc_proposed = best[db_cols[1]]
