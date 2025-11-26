@@ -1,5 +1,6 @@
-# streamlit_estimation_app_with_customers.py
+# streamlit_estimation_app_with_customers_filtered.py
 # BuildWise - Streamlit app with Estimation + Customer Management (Table layout)
+# Filtering: Price list management shows only .xlsx / .xls files
 # NOTE: Matching logic preserved from your working version.
 
 import streamlit as st
@@ -389,6 +390,17 @@ def save_customers_for(user, customers):
 # ------------------------------
 # Price list upload & manage (per user)
 # ------------------------------
+def list_price_list_files(user_folder_path):
+    """Return only Excel files in the user's folder (.xlsx, .xls)."""
+    try:
+        files = sorted([
+            f for f in os.listdir(user_folder_path)
+            if os.path.isfile(os.path.join(user_folder_path, f)) and f.lower().endswith(('.xlsx', '.xls'))
+        ])
+        return files
+    except Exception:
+        return []
+
 def page_price_list_and_matching():
     st.subheader(":file_folder: Upload Price List Files")
     uploaded_files = st.file_uploader("Upload one or more price list Excel files (.xlsx)", type=["xlsx"], accept_multiple_files=True, key="pl_up_main")
@@ -402,7 +414,7 @@ def page_price_list_and_matching():
         st.success("Price list(s) uploaded.")
 
     st.subheader(":open_file_folder: Manage Price Lists")
-    price_list_files = sorted(os.listdir(user_folder))
+    price_list_files = list_price_list_files(user_folder)
     # Show files even if empty list
     if price_list_files:
         st.write("Your uploaded price lists:")
@@ -456,7 +468,7 @@ def page_price_list_and_matching():
         if estimation_file is None:
             st.error("Please upload an estimation file first.")
         else:
-            price_list_files = sorted(os.listdir(user_folder))
+            price_list_files = list_price_list_files(user_folder)
             if not price_list_files:
                 st.error("Please upload at least one price list for your account first.")
             else:
@@ -787,7 +799,7 @@ def page_admin():
     st.subheader("🛠️ Admin - All users' customers & quotations")
     base = "user_data"
     os.makedirs(base, exist_ok=True)
-    users = sorted([d for d in os.listdir(base) if os.path.isdir(os.path.join(base,d))])
+    users = sorted([d for d in os.listdir(base) if os.path.isdir(os.path.join(base, d))])
     if not users:
         st.info("No user folders found yet.")
         return
