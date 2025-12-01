@@ -1,10 +1,10 @@
 # streamlit_estimation_app_final_quotation.py
-# BuildWise - Estimation & Quotation app
+# BuildWise - Estimation & Quotation app (Excel only, no PDF)
 # - Login / users (users.json)
 # - Per-user price lists, customers, company profile
 # - Cable matching (same logic as working version)
 # - Trading terms
-# - Quotation generation (Excel + PDF with FPDF + DejaVuSans)
+# - Quotation generation (Excel only)
 # - Navigation in sidebar
 
 import streamlit as st
@@ -15,7 +15,6 @@ import json
 from io import BytesIO
 from datetime import datetime
 from rapidfuzz import fuzz
-from fpdf import FPDF
 
 # ------------------------------
 # Constants / folders
@@ -23,7 +22,6 @@ from fpdf import FPDF
 USERS_FILE = "users.json"
 FORM_FOLDER = "shared_forms"
 ASSETS_FOLDER = "assets"
-FONT_FILENAME = "DejaVuSans.ttf"  # put this file in assets/ for Vietnamese PDF
 
 DEFAULT_USERS = {
     "Admin123": {"password": "BuildWise2025", "role": "admin"},
@@ -54,10 +52,13 @@ USERS = load_users()
 # Matching utilities (same logic)
 # ------------------------------
 MAIN_SIZE_RE = re.compile(r'\b(\d{1,2})\s*[cC]?\s*[x×]\s*(\d{1,3}(?:\.\d+)?)\b')
-AUX_RE = re.compile(r'\+\s*(?:([1-9]\d*)\s*[cC]?\s*[x×]\s*)?((?:pe|e|n))?(\d{1,3}(?:\.\d+)?)',
-                    flags=re.IGNORECASE)
+AUX_RE = re.compile(
+    r'\+\s*(?:([1-9]\d*)\s*[cC]?\s*[x×]\s*)?((?:pe|e|n))?(\d{1,3}(?:\.\d+)?)',
+    flags=re.IGNORECASE
+)
 MATERIAL_TOKEN_RE = re.compile(
-    r'(cu|aluminium|al|xlpe|pvc|pe|lszh|hdpe|dsta|sta|swa)', flags=re.IGNORECASE
+    r'(cu|aluminium|al|xlpe|pvc|pe|lszh|hdpe|dsta|sta|swa)',
+    flags=re.IGNORECASE
 )
 
 def clean(text: str) -> str:
@@ -190,7 +191,6 @@ def combined_match_score(query, q_main_key, q_aux_key, q_mats,
     cores_score = 0.0
     mat_score = 0.0
 
-    # size
     if q_main_key and r_main_key:
         if q_main_key == r_main_key:
             size_score = 100.0
@@ -199,7 +199,6 @@ def combined_match_score(query, q_main_key, q_aux_key, q_mats,
     else:
         size_score = fuzz.partial_ratio(query, row_combined)
 
-    # aux / cores
     if q_aux_key and r_aux_key:
         if q_aux_key == r_aux_key:
             cores_score = 100.0
@@ -382,7 +381,7 @@ def list_price_list_files(folder_path):
         return []
 
 # ------------------------------
-# Quotation helpers
+# Quotation helpers (Excel only)
 # ------------------------------
 def make_quotation_filename(prefix="Quotation", ext="xlsx"):
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -430,166 +429,9 @@ def save_quotation_excel(user, df, company_info, customer_info, trading_terms, f
 
     return path
 
-def save_quotation_pdf(user, df, company_info, customer_info, trading_terms,
-                       filename=None, logo_path=None):
-    if filename is None:
-        filename = make_quotation_filename("Quotation", "pdf")
-    q_folder = os.path.join("user_data", user, "quotations")
-    os.makedirs(q_folder, exist_ok=True)
-    path = os.path.join(q_folder, filename)
-
-    pdf = FPDF(orientation="P", unit="mm", format="A4")
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
-
-    # font setup
-    font_path = os.path.join(ASSETS_FOLDER, FONT_FILENAME)
-    use_unicode = False
-    font_name = "Helvetica"
-    if os.path.exists(font_path):
-        try:
-            pdf.add_font("DejaVu", "", font_path, uni=True)
-            pdf.add_font("DejaVu", "B", font_path, uni=True)
-            font_name = "DejaVu"
-            use_unicode = True
-        except Exception:
-            font_name = "Helvetica"
-
-    # header
-    pdf.set_font(font_name, "B", 16)
-    if logo_path and os.path.exists(logo_path):
-        try:
-            pdf.image(logo_path, x=15, y=10, w=30)
-            pdf.set_xy(50, 12)
-        except Exception:
-            pdf.set_xy(15, 12)
-    else:
-        pdf.set_xy(15, 12)
-
-    pdf.cell(0, 10, "Quotation / Báo giá", ln=True, align="C")
-    pdf.ln(2)
-
-    # company + customer boxes
-    left_x = 15
-    mid_x = 105
-    top_y = pdf.get_y() + 2
-
-    # company box
-    pdf.set_xy(left_x, top_y)
-    pdf.set_font(font_name, "B", 11)
-    pdf.cell(85, 7, "Company Information", border=1, ln=True)
-    pdf.set_font(font_name, "", 10)
-    comp_lines = [
-        f"Name: {company_info.get('name', '')}",
-        f"Address: {company_info.get('address', '')}",
-        f"Phone: {company_info.get('phone', '')}",
-        f"Email: {company_info.get('email', '')}",
-    ]
-    for line in comp_lines:
-        pdf.cell(85, 5, line, border=1, ln=True)
-
-    # customer box
-    pdf.set_xy(mid_x, top_y)
-    pdf.set_font(font_name, "B", 11)
-    pdf.cell(85, 7, "Customer Information", border=1, ln=True)
-    pdf.set_font(font_name, "", 10)
-    cust_lines = [
-        f"Name: {customer_info.get('name', '')}",
-        f"Company: {customer_info.get('company', '')}",
-        f"Address: {customer_info.get('address', '')}",
-        f"Phone: {customer_info.get('phone', '')}",
-        f"Email: {customer_info.get('email', '')}",
-    ]
-    for line in cust_lines:
-        pdf.cell(85, 5, line, border=1, ln=True)
-
-    # spacing
-    pdf.ln(5)
-
-    # trading terms
-    pdf.set_font(font_name, "B", 11)
-    pdf.cell(0, 7, "Trading Terms / Điều khoản thương mại", ln=True)
-    pdf.set_font(font_name, "", 10)
-    terms_lines = [
-        f"Payment / Thanh toán: {trading_terms.get('payment', '')}",
-        f"Delivery schedule / Tiến độ: {trading_terms.get('delivery', '')}",
-        f"Transportation fee / Phí vận chuyển: {trading_terms.get('transportation_fee', '')}",
-        f"Quotation validity / Hiệu lực báo giá: {trading_terms.get('validity', '')}",
-    ]
-    for line in terms_lines:
-        pdf.multi_cell(0, 6, line)
-    pdf.ln(4)
-
-    # items table
-    headers = list(df.columns)
-    page_w = 210 - 30  # left+right margin
-    ncols = len(headers)
-    if ncols <= 0:
-        pdf.output(path)
-        return path
-
-    base_w = page_w / float(ncols)
-    col_widths = [base_w for _ in headers]
-    for i, h in enumerate(headers):
-        lname = h.lower()
-        if "description" in lname or "specification" in lname:
-            col_widths[i] = base_w * 1.5
-        if "quantity" in lname or lname == "unit":
-            col_widths[i] = base_w * 0.7
-        if "amount" in lname or "total" in lname:
-            col_widths[i] = base_w * 0.9
-
-    total_w = sum(col_widths)
-    col_widths = [w * page_w / total_w for w in col_widths]
-
-    pdf.set_font(font_name, "B", 9)
-    for i, h in enumerate(headers):
-        pdf.cell(col_widths[i], 7, str(h), border=1, align="C")
-    pdf.ln()
-
-    pdf.set_font(font_name, "", 8)
-
-    for ridx in range(len(df)):
-        row = df.iloc[ridx]
-        for i, h in enumerate(headers):
-            val = row[h]
-            text = "" if (pd.isna(val) or val is None) else str(val)
-            x = pdf.get_x()
-            y = pdf.get_y()
-            if len(text) > 28 or "\n" in text:
-                pdf.multi_cell(col_widths[i], 4, text, border=1)
-                pdf.set_xy(x + col_widths[i], y)
-            else:
-                pdf.cell(col_widths[i], 4.5, text, border=1)
-        pdf.ln()
-
-    # grand total
-    pdf.ln(5)
-    total_val = ""
-    if "Total" in df.columns:
-        try:
-            last_total = df.iloc[-1]["Total"]
-            if pd.notna(last_total) and str(last_total).strip() != "":
-                total_val = f"{float(last_total):,.0f}"
-        except Exception:
-            total_val = ""
-
-    if total_val:
-        pdf.set_font(font_name, "B", 12)
-        pdf.cell(0, 6.5, f"Grand Total: {total_val}", ln=True, align="R")
-
-    pdf.ln(6)
-    pdf.set_font(font_name, "", 10)
-    pdf.cell(0, 5.5, "Prepared by: ____________________", ln=True)
-
-    pdf.output(path)
-    return path
-
 # ------------------------------
 # Pages
 # ------------------------------
-
-# Company profile
 def page_company_profile():
     st.subheader("🏢 Company Profile")
     comp_file = os.path.join(user_folder, "company.json")
@@ -617,7 +459,6 @@ def page_company_profile():
             json.dump(data, f, indent=2, ensure_ascii=False)
         st.success("Company profile saved.")
 
-# Customers page
 def page_customers():
     st.subheader("👥 Customers")
 
@@ -629,9 +470,7 @@ def page_customers():
             d for d in os.listdir(base)
             if os.path.isdir(os.path.join(base, d))
         )
-        chosen_user = st.selectbox("Select user",
-                                   ["--Select--"] + user_dirs,
-                                   index=0)
+        chosen_user = st.selectbox("Select user", ["--Select--"] + user_dirs, index=0)
         if chosen_user != "--Select--":
             customers = load_customers_for(chosen_user)
             owner = chosen_user
@@ -729,7 +568,6 @@ def page_customers():
         st.success("Customer deleted.")
         st.experimental_rerun()
 
-# Forms & Instructions
 def page_forms_and_instructions():
     st.subheader("📂 Forms and Instructions")
     st.write("Shared templates and forms. Admin can upload; all users can download.")
@@ -774,9 +612,8 @@ def page_forms_and_instructions():
         else:
             st.info("No forms available.")
 
-# Quotations page
 def page_quotations():
-    st.subheader("📄 Quotations")
+    st.subheader("📄 Quotations (Excel only)")
     q_folder = os.path.join(user_folder, "quotations")
     os.makedirs(q_folder, exist_ok=True)
     files = sorted(os.listdir(q_folder))
@@ -799,7 +636,6 @@ def page_quotations():
                 st.success("Deleted.")
                 st.experimental_rerun()
 
-# Estimation page (main)
 def page_estimation():
     st.subheader("Upload Price List Files")
     uploads = st.file_uploader(
@@ -1089,12 +925,12 @@ def page_estimation():
         amt_lab = qty_num * l_cost
         total = amt_mat + amt_lab
 
-        # important: Model and Specification columns show MATCHED values
+        # Model & Specification show matched values
         results.append([
-            matched_model,                         # Model (matched)
+            matched_model,                         # Model (matched from price list)
             row[est_cols[1]],                     # Description (requested)
-            matched_desc,                         # Description (proposed)
-            matched_spec,                         # Specification (matched)
+            matched_desc,                         # Description (proposed from price list)
+            matched_spec,                         # Specification (matched from price list)
             unit,
             qty_num,
             m_cost,
@@ -1139,12 +975,12 @@ def page_estimation():
     else:
         st.dataframe(unmatched_df, use_container_width=True)
 
-    # quotation
+    # quotation (Excel only)
     st.markdown("---")
-    st.subheader("Quotation")
+    st.subheader("Quotation (Excel only)")
     col_q1, col_q2 = st.columns([1, 1])
     with col_q1:
-        if st.button("Generate quotation"):
+        if st.button("Generate quotation (Excel)"):
             if active_customer is None:
                 st.error("Please select a customer to generate a quotation.")
             else:
@@ -1167,13 +1003,14 @@ def page_estimation():
 
                 excel_df = result_df.copy()
                 excel_path = save_quotation_excel(username, excel_df, company_info, active_customer, current_terms)
-                pdf_path = save_quotation_pdf(username, excel_df, company_info, active_customer, current_terms, logo_path=logo_path)
 
                 st.success("Quotation generated and saved.")
                 with open(excel_path, "rb") as fh:
-                    st.download_button("Download quotation (Excel)", fh.read(), file_name=os.path.basename(excel_path))
-                with open(pdf_path, "rb") as fh:
-                    st.download_button("Download quotation (PDF)", fh.read(), file_name=os.path.basename(pdf_path))
+                    st.download_button(
+                        "Download quotation (Excel)",
+                        fh.read(),
+                        file_name=os.path.basename(excel_path)
+                    )
 
     with col_q2:
         buffer = BytesIO()
@@ -1224,16 +1061,5 @@ elif page == "Quotation":
 elif page == "Forms and Instructions":
     page_forms_and_instructions()
 
-# ------------------------------
-# Font warning
-# ------------------------------
-font_path = os.path.join(ASSETS_FOLDER, FONT_FILENAME)
-if not os.path.exists(font_path):
-    st.warning(
-        f"Unicode font '{FONT_FILENAME}' not found in '{ASSETS_FOLDER}/'. "
-        "Vietnamese characters in PDF may not render correctly. "
-        "Please add the TTF file to enable full Vietnamese support."
-    )
-
 st.markdown("---")
-st.caption("BuildWise — Estimation & Quotation tool")
+st.caption("BuildWise — Estimation & Quotation tool (Excel only)")
