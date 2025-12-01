@@ -547,7 +547,7 @@ def save_quotation_pdf(user, df, company_info, customer_info, trading_terms,
         pdf.cell(col_widths[i], 7, str(h), border=1, align="C")
     pdf.ln()
 
-    pdf.set_font(font_name, "", 😎
+    pdf.set_font(font_name, "", 8)
 
     for ridx in range(len(df)):
         row = df.iloc[ridx]
@@ -580,7 +580,7 @@ def save_quotation_pdf(user, df, company_info, customer_info, trading_terms,
 
     pdf.ln(6)
     pdf.set_font(font_name, "", 10)
-    pdf.cell(0, 5.5, "Prepared by: __________________", ln=True)
+    pdf.cell(0, 5.5, "Prepared by: ____________________", ln=True)
 
     pdf.output(path)
     return path
@@ -891,7 +891,7 @@ def page_estimation():
     if selected_cust_label != "--No customer--":
         idx = cust_labels.index(selected_cust_label) - 1
         active_customer = customers[idx]
-        st.markdown("*Selected customer:*")
+        st.markdown("**Selected customer:**")
         st.write(active_customer)
     else:
         st.info("No customer selected. You can still match, but quotation needs a customer.")
