@@ -1,6 +1,6 @@
-# streamlit_estimation_app_final_quotation_fpdf.py
-# BuildWise - Streamlit app with Estimation, Customer management, Trading Terms, Quotation generation (Excel + PDF using FPDF)
-# Preserves matching logic and UI. Replaces ReportLab with FPDF for PDF export.
+# streamlit_estimation_app_final_quotation.py
+# BuildWise - Streamlit app with Estimation, Customer management, Trading Terms, Quotation generation (Excel + PDF using FPDF + DejaVu Sans)
+# Preserves matching logic and UI. Uses DejaVuSans.ttf (if available) for Vietnamese support.
 
 import streamlit as st
 import pandas as pd
@@ -10,7 +10,7 @@ import json
 from io import BytesIO
 from rapidfuzz import fuzz
 from datetime import datetime
-from fpdf import FPDF  # <-- FPDF used for PDF generation
+from fpdf import FPDF
 
 # ------------------------------
 # Constants & persistence
@@ -18,6 +18,7 @@ from fpdf import FPDF  # <-- FPDF used for PDF generation
 USERS_FILE = "users.json"
 FORM_FOLDER = "shared_forms"
 ASSETS_FOLDER = "assets"
+FONT_FILENAME = "DejaVuSans.ttf"  # expected in assets/
 
 DEFAULT_USERS = {
     "Admin123": {"password": "BuildWise2025", "role": "admin"},
@@ -256,7 +257,7 @@ os.makedirs(FORM_FOLDER, exist_ok=True)
 os.makedirs(os.path.join(user_folder, "quotations"), exist_ok=True)
 
 # ------------------------------
-# Weights persistence
+# Weights persistence (use current defaults)
 # ------------------------------
 def weights_file_for(user):
     folder = f"user_data/{user}"
@@ -525,7 +526,7 @@ def page_customers():
             st.experimental_rerun()
 
 # ------------------------------
-# Quotation helpers: Excel + PDF creation + saving
+# Quotation helpers: Excel + PDF (FPDF + Unicode font if available)
 # ------------------------------
 def make_quotation_filename(prefix="Quotation", ext="xlsx"):
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -572,7 +573,7 @@ def save_quotation_excel(user, df, company_info, customer_info, trading_terms, f
 
 def save_quotation_pdf(user, df, company_info, customer_info, trading_terms, filename=None, logo_path=None):
     """
-    Create a professional PDF using fpdf.
+    Create a professional PDF using FPDF. Use DejaVuSans.ttf if available for Unicode support.
     """
     if filename is None:
         filename = make_quotation_filename("Quotation", "pdf")
@@ -584,126 +585,150 @@ def save_quotation_pdf(user, df, company_info, customer_info, trading_terms, fil
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
 
-    # Fonts
-    pdf.set_font("Helvetica", size=12)
+    # Register Unicode font if available
+    font_path = os.path.join(ASSETS_FOLDER, FONT_FILENAME)
+    use_unicode = False
+    if os.path.exists(font_path):
+        try:
+            pdf.add_font("DejaVu", "", font_path, uni=True)
+            pdf.add_font("DejaVu", "B", font_path, uni=True)
+            font_name = "DejaVu"
+            use_unicode = True
+        except Exception:
+            font_name = "Helvetica"
+            use_unicode = False
+    else:
+        font_name = "Helvetica"
+        use_unicode = False
 
-    # Header: logo + title
+    if not use_unicode:
+        # warn user in UI (we cannot show a popup from here), but we will return path and app will show message
+        pass
+
+    # Header
+    try:
+        pdf.set_font(font_name, 'B', 16)
+    except Exception:
+        pdf.set_font("Helvetica", '', 16)
     if logo_path and os.path.exists(logo_path):
         try:
             pdf.image(logo_path, x=15, y=10, w=30)
             pdf.set_xy(50, 12)
         except Exception:
             pdf.set_xy(15, 12)
-    else:
-        pdf.set_xy(15, 12)
-
-    pdf.set_font("Helvetica", 'B', 16)
     pdf.cell(0, 10, "Quotation / Báo giá", ln=True, align='C')
     pdf.ln(2)
 
-    # company & customer boxes (two columns)
+    # Company & customer boxes in two columns
     left_x = 15
     mid_x = 105
     top_y = pdf.get_y() + 2
 
     # Company box
-    pdf.set_font("Helvetica", 'B', 11)
+    pdf.set_font(font_name, 'B', 11)
     pdf.set_xy(left_x, top_y)
     pdf.cell(85, 7, "Company Information", border=1, ln=1)
-    pdf.set_font("Helvetica", size=10)
-    y = pdf.get_y()
+    pdf.set_font(font_name, '', 10)
     pdf.set_x(left_x)
-    pdf.multi_cell(85, 5, f"Name: {company_info.get('name','')}\nAddress: {company_info.get('address','')}\nPhone: {company_info.get('phone','')}\nEmail: {company_info.get('email','')}", border=1)
+    comp_text = f"Name: {company_info.get('name','')}\nAddress: {company_info.get('address','')}\nPhone: {company_info.get('phone','')}\nEmail: {company_info.get('email','')}"
+    for line in comp_text.split("\n"):
+        pdf.cell(85, 5, line, border=1, ln=1)
 
     # Customer box
     pdf.set_xy(mid_x, top_y)
-    pdf.set_font("Helvetica", 'B', 11)
+    pdf.set_font(font_name, 'B', 11)
     pdf.cell(85, 7, "Customer Information", border=1, ln=1)
-    pdf.set_font("Helvetica", size=10)
+    pdf.set_font(font_name, '', 10)
     pdf.set_x(mid_x)
-    pdf.multi_cell(85, 5, f"Name: {customer_info.get('name','')}\nCompany: {customer_info.get('company','')}\nAddress: {customer_info.get('address','')}\nPhone: {customer_info.get('phone','')}\nEmail: {customer_info.get('email','')}", border=1)
+    cust_text = f"Name: {customer_info.get('name','')}\nCompany: {customer_info.get('company','')}\nAddress: {customer_info.get('address','')}\nPhone: {customer_info.get('phone','')}\nEmail: {customer_info.get('email','')}"
+    for line in cust_text.split("\n"):
+        pdf.cell(85, 5, line, border=1, ln=1)
 
     pdf.ln(4)
 
-    # Trading terms box
-    pdf.set_font("Helvetica", 'B', 11)
+    # Trading terms
+    pdf.set_font(font_name, 'B', 11)
     pdf.cell(0, 7, "Trading Terms / Điều khoản thương mại", ln=1)
-    pdf.set_font("Helvetica", size=10)
-    pdf.multi_cell(0, 6, f"Payment / Thanh toán: {trading_terms.get('payment','')}\nDelivery schedule / Tiến độ: {trading_terms.get('delivery','')}\nTransportation fee / Phí vận chuyển: {trading_terms.get('transportation_fee','')}\nQuotation validity / Hiệu lực báo giá: {trading_terms.get('validity','')}")
+    pdf.set_font(font_name, '', 10)
+    terms_lines = [
+        f"Payment / Thanh toán: {trading_terms.get('payment','')}",
+        f"Delivery schedule / Tiến độ: {trading_terms.get('delivery','')}",
+        f"Transportation fee / Phí vận chuyển: {trading_terms.get('transportation_fee','')}",
+        f"Quotation validity / Hiệu lực báo giá: {trading_terms.get('validity','')}"
+    ]
+    for line in terms_lines:
+        pdf.multi_cell(0, 6, line)
     pdf.ln(4)
 
     # Items table
-    pdf.set_font("Helvetica", 'B', 10)
-    # prepare headers
     headers = list(df.columns)
-    # determine column widths: distribute across page width (210mm - margins)
-    page_width = 210 - 30  # left+right margins ~15 each
-    # assign widths roughly: allow more for description columns
+    # page usable width
+    page_w = 210 - 30  # mm margins
+    # naive column widths: try to allocate more to description/spec columns
     ncols = len(headers)
-    # simple heuristic: if many columns, use small widths
-    base_w = page_width / max(ncols, 1)
+    base_w = page_w / max(ncols, 1)
     col_widths = [base_w] * ncols
-
-    # If standard columns exist, adjust widths for readability
-    # e.g., make 'Requested Description' and 'Matched Description' wider
-    col_names = [c.lower() for c in headers]
-    for i, name in enumerate(col_names):
-        if "description" in name or "specification" in name:
+    for i, h in enumerate(headers):
+        lname = h.lower()
+        if "description" in lname or "specification" in lname:
             col_widths[i] = base_w * 1.6
-        if "quantity" in name or name in ("unit",):
+        if "quantity" in lname or lname in ("unit",):
             col_widths[i] = base_w * 0.7
-        if "total" in name or "amount" in name:
+        if "amount" in lname or "total" in lname:
             col_widths[i] = base_w * 0.9
-
-    # normalize widths to page_width
+    # normalize
     s = sum(col_widths)
-    col_widths = [w * page_width / s for w in col_widths]
+    col_widths = [w * page_w / s for w in col_widths]
 
     # header row
-    pdf.set_fill_color(200, 200, 200)
-    pdf.set_font("Helvetica", 'B', 9)
+    pdf.set_font(font_name, 'B', 9)
     for i, h in enumerate(headers):
-        pdf.cell(col_widths[i], 8, str(h), border=1, align='C', fill=True)
+        pdf.cell(col_widths[i], 8, str(h), border=1, align='C')
     pdf.ln()
 
-    # table rows
-    pdf.set_font("Helvetica", size=9)
-    # leave last row (grand total) but ensure it's printed nicely
-    for idx, row in df.iterrows():
-        # stop long output if page break needed
+    # rows
+    pdf.set_font(font_name, '', 9)
+    for ridx in range(len(df)):
+        row = df.iloc[ridx]
+        # If adding the row would overflow, add a new page (fpdf handles auto page break if using multi_cell; we manage simple)
         for i, h in enumerate(headers):
             val = row[h]
             text = "" if (pd.isna(val) or val is None) else str(val)
-            # limit length for cell to avoid overflow -- we let multi_cell for long text
-            # use cell for simple output
-            pdf.multi_cell(col_widths[i], 6, text, border=1)
-            # after multi_cell, set x to next column start
+            # write cell; for long description use multi_cell into column width and set x for next cell manually
             x = pdf.get_x()
+            y = pdf.get_y()
+            # If text contains newlines or is long, use multi_cell then reposition
+            if "\n" in text or len(text) > 30:
+                pdf.multi_cell(col_widths[i], 5, text, border=1)
+                # move to right of this cell's bottom
+                pdf.set_xy(x + col_widths[i], y)
+            else:
+                pdf.cell(col_widths[i], 6, text, border=1)
         pdf.ln()
 
     pdf.ln(4)
-    # Grand total (try to read 'Total' column last row)
-    # Find last numeric total if exists
+    # Grand total: attempt to read last row Total
     total_val = ""
     if "Total" in df.columns:
-        # if last row contains total (as in the app), use that
         try:
-            last_row_total = df.iloc[-1]["Total"]
-            total_val = f"{float(last_row_total):,.0f}" if pd.notna(last_row_total) and str(last_row_total).strip() != "" else ""
+            last_total = df.iloc[-1]["Total"]
+            if pd.notna(last_total) and str(last_total).strip() != "":
+                total_val = f"{float(last_total):,.0f}"
         except Exception:
             total_val = ""
     if total_val:
-        pdf.set_font("Helvetica", 'B', 12)
+        pdf.set_font(font_name, 'B', 12)
         pdf.cell(0, 8, f"Grand Total: {total_val}", ln=1, align='R')
 
     pdf.ln(😎
-    pdf.set_font("Helvetica", size=10)
+    pdf.set_font(font_name, '', 10)
     pdf.cell(0, 6, "Prepared by: __________________", ln=1)
+
     pdf.output(path)
     return path
 
 # ------------------------------
-# Estimation page (with customer select, trading terms, generate quotation)
+# Estimation page (with customer select + trading terms + generate quotation)
 # ------------------------------
 def page_estimation():
     st.subheader(":file_folder: Upload Price List Files")
@@ -906,36 +931,240 @@ def page_estimation():
                 except Exception:
                     return 0.0
 
-        # (matching loop continues ...)  
-        # The rest of the code is identical to earlier working version and omitted here for brevity.
-        # In your actual file ensure the matching loop and result_df building are included exactly as before,
-        # plus quotation generation calls to save_quotation_excel() and save_quotation_pdf().
+            if not c0.empty:
+                c0 = c0.copy()
+                c0["score"] = c0.apply(score_row, axis=1)
+                top = c0.sort_values("score", ascending=False).head(1)
+                if not top.empty and float(top.iloc[0]["score"]) >= match_threshold:
+                    best = top.iloc[0]
+                    best_score = float(best["score"])
 
-        st.info("Matching executed. (If you see this message in the editor, your app should now run without ReportLab.)")
+            if best is None:
+                c1 = db.copy()
+                c1["score"] = c1.apply(score_row, axis=1)
+                top2 = c1.sort_values("score", ascending=False).head(1)
+                if not top2.empty and float(top2.iloc[0]["score"]) >= match_threshold:
+                    best = top2.iloc[0]
+                    best_score = float(best["score"])
+
+            if best is None:
+                c2 = db.copy()
+                c2["score"] = c2["combined"].apply(lambda x: fuzz.token_set_ratio(query, x))
+                top3 = c2.sort_values("score", ascending=False).head(1)
+                if not top3.empty:
+                    best = top3.iloc[0]
+                    best_score = float(best["score"])
+
+            if best is not None and best_score >= 0:
+                desc_proposed = best[db_cols[1]]
+                matched_model = best[db_cols[0]] if db_cols[0] in best.index else ""
+                matched_spec = best[db_cols[2]] if len(db_cols) > 2 and db_cols[2] in best.index else ""
+                m_cost = pd.to_numeric(best[db_cols[4]], errors="coerce")
+                l_cost = pd.to_numeric(best[db_cols[5]], errors="coerce")
+                if pd.isna(m_cost): m_cost = 0
+                if pd.isna(l_cost): l_cost = 0
+            else:
+                desc_proposed = ""
+                matched_model = ""
+                matched_spec = ""
+                m_cost = l_cost = 0
+
+            qty_val = pd.to_numeric(qty, errors="coerce")
+            if pd.isna(qty_val):
+                qty_val = 0
+            amt_mat = qty_val * (m_cost if pd.notna(m_cost) else 0)
+            amt_lab = qty_val * (l_cost if pd.notna(l_cost) else 0)
+            total = amt_mat + amt_lab
+
+            output_rows.append({
+                "Requested Model": row[est_cols[0]],
+                "Requested Description": row[est_cols[1]],
+                "Requested Specification": row[est_cols[2]],
+                "Unit": unit,
+                "Quantity": qty_val,
+                "Matched Model": matched_model,
+                "Matched Description": desc_proposed,
+                "Matched Specification": matched_spec,
+                "Material Cost": m_cost,
+                "Labour Cost": l_cost,
+                "Amount Material": amt_mat,
+                "Amount Labour": amt_lab,
+                "Total": total
+            })
+
+        result_df = pd.DataFrame(output_rows, columns=[
+            "Requested Model", "Requested Description", "Requested Specification", "Unit", "Quantity",
+            "Matched Model", "Matched Description", "Matched Specification",
+            "Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"
+        ])
+
+        grand_total = result_df["Total"].sum()
+        total_row = {c: "" for c in result_df.columns}
+        total_row["Total"] = grand_total
+        result_df = result_df.append(total_row, ignore_index=True)
+
+        # display
+        st.subheader(":mag: Matched Estimation")
+        display_df = result_df.copy()
+        display_df["Quantity"] = display_df["Quantity"].apply(lambda x: int(x) if (pd.notna(x) and float(x).is_integer()) else x)
+        for col in ["Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"]:
+            display_df[col] = pd.to_numeric(display_df[col], errors="coerce").fillna(0).map("{:,.0f}".format)
+        st.dataframe(display_df, use_container_width=True)
+
+        # unmatched
+        st.subheader(":x: Unmatched Rows")
+        unmatched_df = result_df[result_df["Matched Description"] == ""]
+        if not unmatched_df.empty:
+            st.dataframe(unmatched_df, use_container_width=True)
+        else:
+            st.info(":white_check_mark: All rows matched successfully!")
+
+        # Quotation generation UI
+        st.markdown("---")
+        st.subheader("🧾 Quotation")
+        st.write("If you want to include this matching into a quotation, select customer and fill trading terms (above).")
+        colg1, colg2 = st.columns([1,1])
+        with colg1:
+            if st.button("📤 Generate quotation / Tạo báo giá"):
+                if active_customer is None:
+                    st.error("Please select a customer before generating quotation.")
+                else:
+                    comp_file = os.path.join(user_folder, "company.json")
+                    company_info = {}
+                    if os.path.exists(comp_file):
+                        try:
+                            with open(comp_file, "r", encoding="utf-8") as f:
+                                company_info = json.load(f)
+                        except Exception:
+                            company_info = {}
+                    current_terms = {"payment": payment, "delivery": delivery, "transportation_fee": transportation_fee, "validity": validity}
+                    save_trading_terms(username, current_terms)
+
+                    excel_df = result_df.copy()
+                    excel_path = save_quotation_excel(username, excel_df, company_info, active_customer, current_terms)
+                    pdf_path = save_quotation_pdf(username, excel_df, company_info, active_customer, current_terms, logo_path=logo_path)
+
+                    st.success("Quotation generated and saved.")
+                    st.write("Saved files:")
+                    st.write(f"- {excel_path}")
+                    st.write(f"- {pdf_path}")
+                    with open(excel_path, "rb") as fh:
+                        st.download_button("Download quotation (Excel)", fh.read(), file_name=os.path.basename(excel_path))
+                    with open(pdf_path, "rb") as fh:
+                        st.download_button("Download quotation (PDF)", fh.read(), file_name=os.path.basename(pdf_path))
+        with colg2:
+            buffer = BytesIO()
+            with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+                result_df.to_excel(writer, index=False, sheet_name="Matched Results")
+                if not unmatched_df.empty:
+                    unmatched_df.to_excel(writer, index=False, sheet_name="Unmatched Items")
+            st.download_button("📥 Download Cleaned Estimation File", buffer.getvalue(), file_name="Estimation_Result_BuildWise.xlsx")
 
 # ------------------------------
-# Other pages (Customers, Quotations, Matching Weights, Admin) - unchanged
+# Quotations page
 # ------------------------------
-# NOTE: To keep this message concise I omitted duplicating the unchanged functions definitions here.
-# In the actual file you should paste the full implementations of:
-# - page_customers()
-# - page_quotations()
-# - page_matching_weights()
-# - page_admin()
-# and the sidebar routing identical to the previous version you tested.
-#
-# For convenience I suggest you copy the full content from the previous file,
-# ONLY replacing the save_quotation_pdf(...) function with the fpdf-based implementation above,
-# and removing ReportLab imports.
-#
+def page_quotations():
+    st.subheader("📄 Quotations")
+    q_folder = os.path.join(user_folder, "quotations")
+    os.makedirs(q_folder, exist_ok=True)
+    files = sorted(os.listdir(q_folder))
+    if files:
+        for f in files:
+            path = os.path.join(q_folder, f)
+            c1, c2, c3 = st.columns([4,1,1])
+            with c1:
+                st.write(f)
+            with c2:
+                with open(path,"rb") as fh:
+                    data = fh.read()
+                st.download_button(f"Download", data, file_name=f, key=f"down_q_{f}")
+            with c3:
+                if st.button(f"Delete", key=f"del_q_{f}"):
+                    os.remove(path)
+                    st.success("Deleted.")
+                    st.experimental_rerun()
+    else:
+        st.info("No quotations yet.")
+
 # ------------------------------
-# Sidebar navigation and routing (use same as before)
+# Matching weights page (UI)
+# ------------------------------
+def page_matching_weights():
+    st.subheader("⚖️ Matching Weights & Threshold")
+    st.write("Adjust match threshold and matching component weights (these values are used by the Estimation matching).")
+    cur_threshold = st.session_state.get("match_threshold", 70)
+    cur_size = st.session_state.get("weight_size", 0.45)
+    cur_cores = st.session_state.get("weight_cores", 0.25)
+    cur_material = st.session_state.get("weight_material", 0.30)
+
+    t = st.slider("Match threshold", 0, 100, cur_threshold, key="ui_threshold")
+    s = st.slider("Size weight", 0.0, 1.0, cur_size, step=0.05, key="ui_size_weight")
+    c = st.slider("Cores weight", 0.0, 1.0, cur_cores, step=0.05, key="ui_cores_weight")
+    m = st.slider("Material weight", 0.0, 1.0, cur_material, step=0.05, key="ui_material_weight")
+
+    if st.button("Save matching settings", key="save_matching_settings"):
+        settings = {"threshold": int(t), "size": float(s), "cores": float(c), "material": float(m)}
+        save_weights_for(username, settings)
+        st.session_state["match_threshold"] = settings["threshold"]
+        st.session_state["weight_size"] = settings["size"]
+        st.session_state["weight_cores"] = settings["cores"]
+        st.session_state["weight_material"] = settings["material"]
+        st.success("Matching settings saved.")
+
+# ------------------------------
+# Admin page (view all users customers & quotations)
+# ------------------------------
+def page_admin():
+    st.subheader("🛠️ Admin - All users' customers & quotations")
+    base = "user_data"
+    os.makedirs(base, exist_ok=True)
+    users = sorted([d for d in os.listdir(base) if os.path.isdir(os.path.join(base, d))])
+    if not users:
+        st.info("No user folders found yet.")
+        return
+    for u in users:
+        st.markdown(f"### User: {u}")
+        custs = load_customers_for(u)
+        if custs:
+            st.write(pd.DataFrame(custs))
+        else:
+            st.write("No customers.")
+        qf = os.path.join(base, u, "quotations")
+        if os.path.exists(qf):
+            st.write("Quotations:", sorted(os.listdir(qf)))
+        else:
+            st.write("Quotations: (none)")
+
+# ------------------------------
+# Sidebar navigation
 # ------------------------------
 st.sidebar.title("Navigation")
 page = st.sidebar.radio("Go to", ["Estimation", "Customers", "Company Profile", "Quotations", "Forms and Instructions", "Matching Weights"] + (["Admin"] if role=="admin" else []), index=0)
 
-# Basic routing placeholder (replace with full routing as in your working file)
+# ------------------------------
+# Routing
+# ------------------------------
 if page == "Estimation":
     page_estimation()
+elif page == "Customers":
+    page_customers()
+elif page == "Company Profile":
+    page_company_profile()
+elif page == "Quotations":
+    page_quotations()
+elif page == "Forms and Instructions":
+    page_forms_and_instructions()
+elif page == "Matching Weights":
+    page_matching_weights()
+elif page == "Admin" and role == "admin":
+    page_admin()
 else:
-    st.info("Select 'Estimation' to test PDF generation. Other pages unchanged in this snippet.")
+    st.info("Select a page from the sidebar.")
+
+# Footer: warn if font missing
+font_path = os.path.join(ASSETS_FOLDER, FONT_FILENAME)
+if not os.path.exists(font_path):
+    st.warning(f"Unicode font '{FONT_FILENAME}' not found in '{ASSETS_FOLDER}/'. Vietnamese characters in PDF may not render properly. To fix: upload '{FONT_FILENAME}' to the '{ASSETS_FOLDER}' folder. Recommended: DejaVuSans.ttf")
+
+st.markdown("---")
+st.caption("BuildWise — Estimation & Quotation tool. Matching logic preserved. Store: user_data/<username>/quotations/")
