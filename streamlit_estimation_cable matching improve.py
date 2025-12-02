@@ -1,3 +1,12 @@
+# streamlit_estimation_app_final_quotation.py
+# BuildWise - Estimation & Quotation app (Excel template version)
+# - Login / users (users.json)
+# - Per-user price lists, customers, company profile
+# - Cable matching (same logic as previous working version)
+# - Trading terms
+# - Quotation generation using quotation_template.xlsx (no PDF)
+# - Quotation history + download + preview
+
 import streamlit as st
 import pandas as pd
 import os
@@ -6,6 +15,7 @@ import json
 from io import BytesIO
 from datetime import datetime
 from rapidfuzz import fuzz
+from openpyxl import load_workbook
 
 # ------------------------------
 # Constants / folders
@@ -13,6 +23,7 @@ from rapidfuzz import fuzz
 USERS_FILE = "users.json"
 FORM_FOLDER = "shared_forms"
 ASSETS_FOLDER = "assets"
+TEMPLATE_FILENAME = "quotation_template.xlsx"
 
 DEFAULT_USERS = {
     "Admin123": {"password": "BuildWise2025", "role": "admin"},
@@ -26,6 +37,7 @@ def save_users(users):
     with open(USERS_FILE, "w", encoding="utf-8") as f:
         json.dump(users, f, indent=2, ensure_ascii=False)
 
+
 def load_users():
     if os.path.exists(USERS_FILE):
         try:
@@ -37,10 +49,11 @@ def load_users():
         save_users(DEFAULT_USERS)
         return DEFAULT_USERS.copy()
 
+
 USERS = load_users()
 
 # ------------------------------
-# Matching utilities
+# Matching utilities (same logic)
 # ------------------------------
 MAIN_SIZE_RE = re.compile(r'\b(\d{1,2})\s*[cC]?\s*[x×]\s*(\d{1,3}(?:\.\d+)?)\b')
 AUX_RE = re.compile(
@@ -48,8 +61,10 @@ AUX_RE = re.compile(
     flags=re.IGNORECASE
 )
 MATERIAL_TOKEN_RE = re.compile(
-    r'(cu|aluminium|al|xlpe|pvc|pe|lszh|hdpe|dsta|sta|swa)', flags=re.IGNORECASE
+    r'(cu|aluminium|al|xlpe|pvc|pe|lszh|hdpe|dsta|sta|swa)',
+    flags=re.IGNORECASE
 )
+
 
 def clean(text: str) -> str:
     text = str(text).lower()
@@ -61,6 +76,7 @@ def clean(text: str) -> str:
     text = text.replace("cáp", "").replace("cable", "").replace("dây", "")
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
 
 def parse_cable_spec(text: str) -> dict:
     text = str(text).lower().replace("mm2", "").replace("mm²", "")
@@ -129,6 +145,7 @@ def parse_cable_spec(text: str) -> dict:
         "full_key": full_key
     }
 
+
 def extract_material_structure_tokens(text: str):
     text = str(text).lower()
     tokens = MATERIAL_TOKEN_RE.findall(text)
@@ -140,6 +157,7 @@ def extract_material_structure_tokens(text: str):
         else:
             norm.append(tt)
     return norm
+
 
 def material_structure_score(query_tokens, target_tokens):
     if not query_tokens and not target_tokens:
@@ -174,9 +192,12 @@ def material_structure_score(query_tokens, target_tokens):
     score = max(0.0, base - penalty)
     return score
 
-def combined_match_score(query, q_main_key, q_aux_key, q_mats,
-                         row_combined, r_main_key, r_aux_key, r_mats,
-                         threshold, weights):
+
+def combined_match_score(
+    query, q_main_key, q_aux_key, q_mats,
+    row_combined, r_main_key, r_aux_key, r_mats,
+    threshold, weights
+):
     size_score = 0.0
     cores_score = 0.0
     mat_score = 0.0
@@ -199,10 +220,13 @@ def combined_match_score(query, q_main_key, q_aux_key, q_mats,
 
     mat_score = material_structure_score(q_mats, r_mats)
 
-    final = (weights["size"] * size_score
-             + weights["cores"] * cores_score
-             + weights["material"] * mat_score)
+    final = (
+        weights["size"] * size_score
+        + weights["cores"] * cores_score
+        + weights["material"] * mat_score
+    )
     return final
+
 
 # ------------------------------
 # Streamlit setup & login
@@ -214,6 +238,7 @@ if "logged_in" not in st.session_state:
     st.session_state["username"] = ""
     st.session_state["role"] = ""
 
+
 def do_login(user: str, pwd: str):
     user = user.strip()
     if user in USERS and USERS[user]["password"] == pwd:
@@ -223,10 +248,12 @@ def do_login(user: str, pwd: str):
         return True
     return False
 
+
 def do_logout():
     st.session_state["logged_in"] = False
     st.session_state["username"] = ""
     st.session_state["role"] = ""
+
 
 if not st.session_state["logged_in"]:
     st.title("📐 BuildWise - Sign in")
@@ -237,7 +264,9 @@ if not st.session_state["logged_in"]:
         if submitted:
             ok = do_login(u, p)
             if ok:
-                st.success(f"Logged in as {st.session_state['username']} ({st.session_state['role']})")
+                st.success(
+                    f"Logged in as {st.session_state['username']} ({st.session_state['role']})"
+                )
                 st.experimental_rerun()
             else:
                 st.error("Invalid username or password. Edit users.json to add users if needed.")
@@ -246,7 +275,7 @@ if not st.session_state["logged_in"]:
 username = st.session_state["username"]
 role = st.session_state["role"]
 
-# header
+# Header
 col1, col2 = st.columns([8, 1])
 with col1:
     logo_path = os.path.join(ASSETS_FOLDER, "logo.png")
@@ -258,19 +287,20 @@ with col2:
         do_logout()
         st.experimental_rerun()
 
-# ensure folders
+# Folders
 user_folder = os.path.join("user_data", username)
 os.makedirs(user_folder, exist_ok=True)
 os.makedirs(FORM_FOLDER, exist_ok=True)
 os.makedirs(os.path.join(user_folder, "quotations"), exist_ok=True)
 
 # ------------------------------
-# Match settings (per-user)
+# Matching settings (per-user)
 # ------------------------------
 def weights_file_for(user):
     folder = os.path.join("user_data", user)
     os.makedirs(folder, exist_ok=True)
     return os.path.join(folder, "weights.json")
+
 
 def load_weights_for(user):
     path = weights_file_for(user)
@@ -289,10 +319,12 @@ def load_weights_for(user):
             return defaults
     return defaults
 
+
 def save_weights_for(user, wdict):
     path = weights_file_for(user)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(wdict, f, indent=2, ensure_ascii=False)
+
 
 if "match_settings_loaded" not in st.session_state:
     st.session_state["match_settings_loaded"] = True
@@ -303,12 +335,13 @@ if "match_settings_loaded" not in st.session_state:
     st.session_state["weight_material"] = ws["material"]
 
 # ------------------------------
-# Customers utils
+# Customers & trading terms utils
 # ------------------------------
 def user_customers_file(user):
     folder = os.path.join("user_data", user)
     os.makedirs(folder, exist_ok=True)
     return os.path.join(folder, "customers.json")
+
 
 def load_customers_for(user):
     path = user_customers_file(user)
@@ -320,18 +353,18 @@ def load_customers_for(user):
             return []
     return []
 
+
 def save_customers_for(user, customers):
     path = user_customers_file(user)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(customers, f, indent=2, ensure_ascii=False)
 
-# ------------------------------
-# Trading terms utils
-# ------------------------------
+
 def trading_terms_file(user):
     folder = os.path.join("user_data", user)
     os.makedirs(folder, exist_ok=True)
     return os.path.join(folder, "trading_terms.json")
+
 
 def load_trading_terms(user):
     path = trading_terms_file(user)
@@ -352,14 +385,13 @@ def load_trading_terms(user):
             return defaults
     return defaults
 
+
 def save_trading_terms(user, data):
     path = trading_terms_file(user)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
-# ------------------------------
-# Helper: price list files
-# ------------------------------
+
 def list_price_list_files(folder_path):
     try:
         return sorted(
@@ -370,59 +402,116 @@ def list_price_list_files(folder_path):
     except Exception:
         return []
 
-# ------------------------------
-# Quotation helpers (Excel only)
-# ------------------------------
+
 def make_quotation_filename(prefix="Quotation", ext="xlsx"):
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     return f"{prefix}_{ts}.{ext}"
 
-def save_quotation_excel(user, df, company_info, customer_info, trading_terms, filename=None):
-    if filename is None:
-        filename = make_quotation_filename("Quotation", "xlsx")
+
+# ------------------------------
+# Quotation template handling
+# ------------------------------
+def create_quotation_from_template(user, result_df, company_info, customer_info, trading_terms):
+    """
+    Fill quotation_template.xlsx with company, customer, terms, and matched items,
+    then save to user history and return a BytesIO for download.
+    """
+    template_path = os.path.join(ASSETS_FOLDER, TEMPLATE_FILENAME)
+    if not os.path.exists(template_path):
+        raise FileNotFoundError(f"Template not found at {template_path}")
+
+    grand_total = pd.to_numeric(result_df["Total"], errors="coerce").sum()
+
+    wb = load_workbook(template_path)
+    sheet_names = wb.sheetnames
+    if len(sheet_names) < 2:
+        raise ValueError("Template must have at least two sheets (Quotation, Matched items).")
+    sh_quote = wb[sheet_names[0]]
+    sh_items = wb[sheet_names[1]]
+
+    # Company info
+    sh_quote["A1"] = company_info.get("name", "")
+    sh_quote["A2"] = company_info.get("address", "")
+    sh_quote["A3"] = company_info.get("phone", "")
+    sh_quote["A4"] = company_info.get("email", "")
+
+    # Customer info
+    sh_quote["D3"] = customer_info.get("name", "")
+    sh_quote["D4"] = customer_info.get("company", "")
+    sh_quote["D5"] = customer_info.get("address", "")
+    sh_quote["D6"] = customer_info.get("phone", "")
+    sh_quote["D7"] = customer_info.get("email", "")
+
+    # Trading terms
+    sh_quote["A21"] = trading_terms.get("payment", "")
+    sh_quote["A22"] = trading_terms.get("delivery", "")
+    sh_quote["A23"] = trading_terms.get("transportation_fee", "")
+    sh_quote["A24"] = trading_terms.get("validity", "")
+
+    # Grand total on Quotation sheet
+    try:
+        sh_quote["K33"] = float(grand_total)
+    except Exception:
+        sh_quote["K33"] = grand_total
+
+    # Matched items on second sheet
+    # Skip last row of result_df (grand total row)
+    items_df = result_df.iloc[:-1].copy() if len(result_df) > 0 else result_df.copy()
+
+    # Clear old data in rows 2..40 for columns A..K (keep header/format in row 1)
+    max_row_to_clear = 40
+    for r in range(2, max_row_to_clear + 1):
+        for c in range(1, 12):
+            sh_items.cell(row=r, column=c, value=None)
+
+    # Write rows starting from row 2
+    for idx, (_, row) in enumerate(items_df.iterrows(), start=2):
+        sh_items.cell(row=idx, column=1, value=row.get("Model", ""))
+        sh_items.cell(row=idx, column=2, value=row.get("Description (requested)", ""))
+        sh_items.cell(row=idx, column=3, value=row.get("Description (proposed)", ""))
+        sh_items.cell(row=idx, column=4, value=row.get("Specification", ""))
+        sh_items.cell(row=idx, column=5, value=row.get("Unit", ""))
+        sh_items.cell(row=idx, column=6, value=float(row.get("Quantity", 0) or 0))
+        sh_items.cell(row=idx, column=7, value=float(row.get("Material Cost", 0) or 0))
+        sh_items.cell(row=idx, column=8, value=float(row.get("Labour Cost", 0) or 0))
+        sh_items.cell(row=idx, column=9, value=float(row.get("Amount Material", 0) or 0))
+        sh_items.cell(row=idx, column=10, value=float(row.get("Amount Labour", 0) or 0))
+        sh_items.cell(row=idx, column=11, value=float(row.get("Total", 0) or 0))
+
+    # Save to buffer
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    # Also save to user's quotation history
     q_folder = os.path.join("user_data", user, "quotations")
     os.makedirs(q_folder, exist_ok=True)
+    filename = make_quotation_filename("Quotation", "xlsx")
     path = os.path.join(q_folder, filename)
+    with open(path, "wb") as f:
+        f.write(output.getvalue())
 
-    with pd.ExcelWriter(path, engine="xlsxwriter") as writer:
-        meta = pd.DataFrame({
-            "Company": [company_info.get("name", "")],
-            "Company Address": [company_info.get("address", "")],
-            "Company Phone": [company_info.get("phone", "")],
-            "Company Email": [company_info.get("email", "")]
-        })
-        meta.to_excel(writer, sheet_name="Quotation", index=False, startrow=0)
-        worksheet = writer.sheets["Quotation"]
-        start = 5
-        worksheet.write(start, 0, "Customer Name")
-        worksheet.write(start, 1, customer_info.get("name", ""))
-        worksheet.write(start + 1, 0, "Company")
-        worksheet.write(start + 1, 1, customer_info.get("company", ""))
-        worksheet.write(start + 2, 0, "Address")
-        worksheet.write(start + 2, 1, customer_info.get("address", ""))
-        worksheet.write(start + 3, 0, "Phone")
-        worksheet.write(start + 3, 1, customer_info.get("phone", ""))
-        worksheet.write(start + 4, 0, "Email")
-        worksheet.write(start + 4, 1, customer_info.get("email", ""))
+    return output, path
 
-        tstart = start + 6
-        worksheet.write(tstart, 0, "Payment / Thanh toán")
-        worksheet.write(tstart, 1, trading_terms.get("payment", ""))
-        worksheet.write(tstart + 1, 0, "Delivery schedule / Tiến độ")
-        worksheet.write(tstart + 1, 1, trading_terms.get("delivery", ""))
-        worksheet.write(tstart + 2, 0, "Transportation fee / Phí vận chuyển")
-        worksheet.write(tstart + 2, 1, trading_terms.get("transportation_fee", ""))
-        worksheet.write(tstart + 3, 0, "Quotation validity / Hiệu lực báo giá")
-        worksheet.write(tstart + 3, 1, trading_terms.get("validity", ""))
 
-        df.to_excel(writer, sheet_name="Items", index=False)
+def preview_quotation_from_bytes(xlsx_bytes):
+    """
+    Load Quotation sheet from xlsx bytes and show as a pandas DataFrame (for preview).
+    """
+    buffer = BytesIO(xlsx_bytes)
+    wb = load_workbook(buffer, data_only=True)
+    sh_quote = wb[wb.sheetnames[0]]
+    data = []
+    for row in sh_quote.iter_rows(values_only=True):
+        data.append(list(row))
+    df = pd.DataFrame(data)
+    return df
 
-    return path
 
 # ------------------------------
-# Company profile page
+# Pages
 # ------------------------------
-def page_company_profile():
+def page_company_profile(user_folder):
     st.subheader("🏢 Company Profile")
     comp_file = os.path.join(user_folder, "company.json")
     profile = {}
@@ -449,9 +538,7 @@ def page_company_profile():
             json.dump(data, f, indent=2, ensure_ascii=False)
         st.success("Company profile saved.")
 
-# ------------------------------
-# Customers page
-# ------------------------------
+
 def page_customers():
     st.subheader("👥 Customers")
 
@@ -463,9 +550,7 @@ def page_customers():
             d for d in os.listdir(base)
             if os.path.isdir(os.path.join(base, d))
         )
-        chosen_user = st.selectbox("Select user",
-                                   ["--Select--"] + user_dirs,
-                                   index=0)
+        chosen_user = st.selectbox("Select user", ["--Select--"] + user_dirs, index=0)
         if chosen_user != "--Select--":
             customers = load_customers_for(chosen_user)
             owner = chosen_user
@@ -476,6 +561,7 @@ def page_customers():
         customers = load_customers_for(username)
         owner = username
 
+    # Add new customer
     with st.expander("Add new customer", expanded=False):
         c_name = st.text_input("Customer name")
         c_company = st.text_input("Company")
@@ -563,9 +649,7 @@ def page_customers():
         st.success("Customer deleted.")
         st.experimental_rerun()
 
-# ------------------------------
-# Forms & Instructions page
-# ------------------------------
+
 def page_forms_and_instructions():
     st.subheader("📂 Forms and Instructions")
     st.write("Shared templates and forms. Admin can upload; all users can download.")
@@ -610,9 +694,7 @@ def page_forms_and_instructions():
         else:
             st.info("No forms available.")
 
-# ------------------------------
-# Quotations page
-# ------------------------------
+
 def page_quotations():
     st.subheader("📄 Quotations")
     q_folder = os.path.join(user_folder, "quotations")
@@ -637,12 +719,10 @@ def page_quotations():
                 st.success("Deleted.")
                 st.experimental_rerun()
 
-# ------------------------------
-# Estimation page
-# ------------------------------
+
 def page_estimation():
-    # 1. Upload price list
-    st.subheader("1. Upload price list files")
+    # 1. Upload price lists
+    st.subheader("1. Upload Price List Files")
     uploads = st.file_uploader(
         "Upload one or more price list Excel files (.xlsx)",
         type=["xlsx"],
@@ -659,14 +739,14 @@ def page_estimation():
         st.success("Price lists uploaded.")
 
     # 2. Manage price lists
-    st.subheader("2. Manage price lists")
+    st.subheader("2. Manage Price Lists")
     price_list_files = list_price_list_files(user_folder)
     if price_list_files:
         st.write("Your price lists:")
         for f in price_list_files:
             st.write(f"- {f}")
     else:
-        st.info("No price lists uploaded.")
+        st.info("No price lists uploaded yet.")
 
     selected_file = st.radio(
         "Choose one price list or use all",
@@ -692,15 +772,15 @@ def page_estimation():
                     except Exception as e:
                         st.error(f"Error deleting file: {e}")
 
-    # 3. Matching estimation request file
-    st.markdown("---")
-    st.subheader("3. Matching estimation request file")
-
+    # 3. Matching estimation request
+    st.subheader("3. Matching Estimation Request File")
     estimation_file = st.file_uploader(
         "Upload estimation request (.xlsx)",
         type=["xlsx"],
         key="estimation_file_main"
     )
+
+    run_matching = st.button("Match now")
 
     match_threshold = st.session_state.get("match_threshold", 70)
     w_size = st.session_state.get("weight_size", 0.45)
@@ -715,329 +795,360 @@ def page_estimation():
         "material": w_material / total_w
     }
 
-    if st.button("Match now"):
+    if run_matching:
         if estimation_file is None:
             st.error("Please upload an estimation file first.")
         elif not price_list_files:
             st.error("Please upload at least one price list first.")
         else:
-            # read estimation
             try:
                 est = pd.read_excel(estimation_file).dropna(how="all")
             except Exception as e:
                 st.error(f"Cannot read estimation file: {e}")
-                return
+                est = None
 
-            est_cols = est.columns.tolist()
-            if len(est_cols) < 5:
-                st.error("Estimation file must have at least 5 columns (Model, Description, Spec, Unit, Quantity).")
-                return
-
-            base_est = (
-                est[est_cols[0]].fillna("") + " "
-                + est[est_cols[1]].fillna("") + " "
-                + est[est_cols[2]].fillna("")
-            )
-            est["combined"] = base_est.apply(clean)
-            parsed_est = base_est.apply(parse_cable_spec)
-            est["main_key"] = parsed_est.apply(lambda d: d["main_key"])
-            est["aux_key"] = parsed_est.apply(lambda d: d["aux_key"])
-            est["materials"] = base_est.apply(extract_material_structure_tokens)
-
-            # read DB(s)
-            price_list_files_local = list_price_list_files(user_folder)
-            if not price_list_files_local:
-                st.error("No price list files found.")
-                return
-
-            if selected_file == "All files":
-                frames = []
-                for f in price_list_files_local:
-                    try:
-                        df_pl = pd.read_excel(os.path.join(user_folder, f)).dropna(how="all")
-                        df_pl["source"] = f
-                        frames.append(df_pl)
-                    except Exception:
-                        continue
-                db = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-            else:
-                try:
-                    db = pd.read_excel(os.path.join(user_folder, selected_file)).dropna(how="all")
-                    db["source"] = selected_file
-                except Exception as e:
-                    st.error(f"Cannot read price list: {e}")
-                    return
-
-            if db.empty:
-                st.error("No rows found in price list file(s).")
-                return
-
-            db_cols = db.columns.tolist()
-            if len(db_cols) < 6:
-                st.error("Price list requires at least 6 columns (Model, Description, Spec, ..., MaterialCost, LabourCost).")
-                return
-
-            base_db = (
-                db[db_cols[0]].fillna("") + " "
-                + db[db_cols[1]].fillna("") + " "
-                + db[db_cols[2]].fillna("")
-            )
-            db["combined"] = base_db.apply(clean)
-            parsed_db = base_db.apply(parse_cable_spec)
-            db["main_key"] = parsed_db.apply(lambda d: d["main_key"])
-            db["aux_key"] = parsed_db.apply(lambda d: d["aux_key"])
-            db["materials"] = base_db.apply(extract_material_structure_tokens)
-
-            results = []
-            for _, row in est.iterrows():
-                query = row["combined"]
-                q_main = row["main_key"]
-                q_aux = row["aux_key"]
-                q_mats = row["materials"]
-                unit = row[est_cols[3]]
-                qty_value = row[est_cols[4]]
-
-                best = None
-                best_score = -1.0
-
-                c0 = db.copy()
-                if q_main:
-                    c0 = c0[c0["main_key"] == q_main]
-
-                def score_row(r):
-                    try:
-                        r_main = r.get("main_key", "")
-                        r_aux = r.get("aux_key", "")
-                        r_mats = r.get("materials", [])
-                        return combined_match_score(
-                            query, q_main, q_aux, q_mats,
-                            r.get("combined", ""),
-                            r_main, r_aux, r_mats,
-                            match_threshold, weights
-                        )
-                    except Exception:
-                        return 0.0
-
-                if not c0.empty:
-                    c0 = c0.copy()
-                    c0["score"] = c0.apply(score_row, axis=1)
-                    top = c0.sort_values("score", ascending=False).head(1)
-                    if not top.empty and float(top.iloc[0]["score"]) >= match_threshold:
-                        best = top.iloc[0]
-                        best_score = float(best["score"])
-
-                if best is None:
-                    c1 = db.copy()
-                    c1["score"] = c1.apply(score_row, axis=1)
-                    top2 = c1.sort_values("score", ascending=False).head(1)
-                    if not top2.empty and float(top2.iloc[0]["score"]) >= match_threshold:
-                        best = top2.iloc[0]
-                        best_score = float(best["score"])
-
-                if best is None:
-                    c2 = db.copy()
-                    c2["score"] = c2["combined"].apply(lambda x: fuzz.token_set_ratio(query, x))
-                    top3 = c2.sort_values("score", ascending=False).head(1)
-                    if not top3.empty:
-                        best = top3.iloc[0]
-                        best_score = float(best["score"])
-
-                if best is not None and best_score >= 0:
-                    matched_desc = best[db_cols[1]]
-                    matched_model = best[db_cols[0]]
-                    matched_spec = best[db_cols[2]]
-                    m_cost = pd.to_numeric(best[db_cols[4]], errors="coerce")
-                    l_cost = pd.to_numeric(best[db_cols[5]], errors="coerce")
-                    if pd.isna(m_cost):
-                        m_cost = 0
-                    if pd.isna(l_cost):
-                        l_cost = 0
+            if est is not None:
+                est_cols = est.columns.tolist()
+                if len(est_cols) < 5:
+                    st.error("Estimation file must have at least 5 columns (Model, Description, Spec, Unit, Quantity).")
                 else:
-                    matched_desc = ""
-                    matched_model = ""
-                    matched_spec = ""
-                    m_cost = 0
-                    l_cost = 0
+                    base_est = (
+                        est[est_cols[0]].fillna("") + " "
+                        + est[est_cols[1]].fillna("") + " "
+                        + est[est_cols[2]].fillna("")
+                    )
+                    est["combined"] = base_est.apply(clean)
+                    parsed_est = base_est.apply(parse_cable_spec)
+                    est["main_key"] = parsed_est.apply(lambda d: d["main_key"])
+                    est["aux_key"] = parsed_est.apply(lambda d: d["aux_key"])
+                    est["materials"] = base_est.apply(extract_material_structure_tokens)
 
-                qty_num = pd.to_numeric(qty_value, errors="coerce")
-                if pd.isna(qty_num):
-                    qty_num = 0
-                amt_mat = qty_num * m_cost
-                amt_lab = qty_num * l_cost
-                total = amt_mat + amt_lab
+                    # build DB
+                    if selected_file == "All files":
+                        frames = []
+                        for f in price_list_files:
+                            try:
+                                df_pl = pd.read_excel(os.path.join(user_folder, f)).dropna(how="all")
+                                df_pl["source"] = f
+                                frames.append(df_pl)
+                            except Exception:
+                                continue
+                        db = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+                    else:
+                        try:
+                            db = pd.read_excel(os.path.join(user_folder, selected_file)).dropna(how="all")
+                            db["source"] = selected_file
+                        except Exception as e:
+                            st.error(f"Cannot read price list: {e}")
+                            db = pd.DataFrame()
 
-                results.append([
-                    matched_model,             # Model (matched)
-                    row[est_cols[1]],         # Description (requested)
-                    matched_desc,             # Description (proposed)
-                    matched_spec,             # Specification (matched)
-                    unit,
-                    qty_num,
-                    m_cost,
-                    l_cost,
-                    amt_mat,
-                    amt_lab,
-                    total
-                ])
+                    if db.empty:
+                        st.error("No rows found in price list file(s).")
+                    else:
+                        db_cols = db.columns.tolist()
+                        if len(db_cols) < 6:
+                            st.error("Price list requires at least 6 columns (Model, Description, Spec, ..., MaterialCost, LabourCost).")
+                        else:
+                            base_db = (
+                                db[db_cols[0]].fillna("") + " "
+                                + db[db_cols[1]].fillna("") + " "
+                                + db[db_cols[2]].fillna("")
+                            )
+                            db["combined"] = base_db.apply(clean)
+                            parsed_db = base_db.apply(parse_cable_spec)
+                            db["main_key"] = parsed_db.apply(lambda d: d["main_key"])
+                            db["aux_key"] = parsed_db.apply(lambda d: d["aux_key"])
+                            db["materials"] = base_db.apply(extract_material_structure_tokens)
 
-            result_df = pd.DataFrame(
-                results,
-                columns=[
-                    "Model",
-                    "Description (requested)",
-                    "Description (proposed)",
-                    "Specification",
-                    "Unit",
-                    "Quantity",
-                    "Material Cost",
-                    "Labour Cost",
-                    "Amount Material",
-                    "Amount Labour",
-                    "Total"
-                ]
-            )
+                            results = []
+                            for _, row in est.iterrows():
+                                query = row["combined"]
+                                q_main = row["main_key"]
+                                q_aux = row["aux_key"]
+                                q_mats = row["materials"]
+                                unit = row[est_cols[3]]
+                                qty_value = row[est_cols[4]]
 
-            grand_total = pd.to_numeric(result_df["Total"], errors="coerce").sum()
-            result_df.loc[len(result_df.index)] = [""] * 10 + [grand_total]
+                                best = None
+                                best_score = -1.0
 
-            unmatched_df = result_df[result_df["Description (proposed)"] == ""]
+                                c0 = db.copy()
+                                if q_main:
+                                    c0 = c0[c0["main_key"] == q_main]
 
-            st.session_state["match_result_df"] = result_df
-            st.session_state["match_unmatched_df"] = unmatched_df
+                                def score_row(r):
+                                    try:
+                                        r_main = r.get("main_key", "")
+                                        r_aux = r.get("aux_key", "")
+                                        r_mats = r.get("materials", [])
+                                        return combined_match_score(
+                                            query, q_main, q_aux, q_mats,
+                                            r.get("combined", ""),
+                                            r_main, r_aux, r_mats,
+                                            match_threshold, weights
+                                        )
+                                    except Exception:
+                                        return 0.0
 
-            st.success("Matching completed. Results are displayed below and will remain while you edit customers and trading terms.")
+                                if not c0.empty:
+                                    c0 = c0.copy()
+                                    c0["score"] = c0.apply(score_row, axis=1)
+                                    top = c0.sort_values("score", ascending=False).head(1)
+                                    if not top.empty and float(top.iloc[0]["score"]) >= match_threshold:
+                                        best = top.iloc[0]
+                                        best_score = float(best["score"])
 
-    # Display matching results if available
-    if "match_result_df" in st.session_state:
-        result_df = st.session_state["match_result_df"]
-        unmatched_df = st.session_state.get("match_unmatched_df", pd.DataFrame())
+                                if best is None:
+                                    c1 = db.copy()
+                                    c1["score"] = c1.apply(score_row, axis=1)
+                                    top2 = c1.sort_values("score", ascending=False).head(1)
+                                    if not top2.empty and float(top2.iloc[0]["score"]) >= match_threshold:
+                                        best = top2.iloc[0]
+                                        best_score = float(best["score"])
 
-        st.markdown("#### Result matching table")
+                                if best is None:
+                                    c2 = db.copy()
+                                    c2["score"] = c2["combined"].apply(
+                                        lambda x: fuzz.token_set_ratio(query, x)
+                                    )
+                                    top3 = c2.sort_values("score", ascending=False).head(1)
+                                    if not top3.empty:
+                                        best = top3.iloc[0]
+                                        best_score = float(best["score"])
+
+                                if best is not None and best_score >= 0:
+                                    matched_desc = best[db_cols[1]]
+                                    matched_model = best[db_cols[0]]
+                                    matched_spec = best[db_cols[2]]
+                                    m_cost = pd.to_numeric(best[db_cols[4]], errors="coerce")
+                                    l_cost = pd.to_numeric(best[db_cols[5]], errors="coerce")
+                                    if pd.isna(m_cost):
+                                        m_cost = 0
+                                    if pd.isna(l_cost):
+                                        l_cost = 0
+                                else:
+                                    matched_desc = ""
+                                    matched_model = ""
+                                    matched_spec = ""
+                                    m_cost = 0
+                                    l_cost = 0
+
+                                qty_num = pd.to_numeric(qty_value, errors="coerce")
+                                if pd.isna(qty_num):
+                                    qty_num = 0
+                                amt_mat = qty_num * m_cost
+                                amt_lab = qty_num * l_cost
+                                total = amt_mat + amt_lab
+
+                                results.append([
+                                    matched_model,
+                                    row[est_cols[1]],
+                                    matched_desc,
+                                    matched_spec,
+                                    unit,
+                                    qty_num,
+                                    m_cost,
+                                    l_cost,
+                                    amt_mat,
+                                    amt_lab,
+                                    total
+                                ])
+
+                            result_df = pd.DataFrame(
+                                results,
+                                columns=[
+                                    "Model",
+                                    "Description (requested)",
+                                    "Description (proposed)",
+                                    "Specification",
+                                    "Unit",
+                                    "Quantity",
+                                    "Material Cost",
+                                    "Labour Cost",
+                                    "Amount Material",
+                                    "Amount Labour",
+                                    "Total"
+                                ]
+                            )
+
+                            grand_total = pd.to_numeric(result_df["Total"], errors="coerce").sum()
+                            result_df.loc[len(result_df.index)] = [""] * 10 + [grand_total]
+
+                            unmatched_df = result_df[result_df["Description (proposed)"] == ""]
+
+                            st.session_state["result_df"] = result_df
+                            st.session_state["unmatched_df"] = unmatched_df
+
+    # Show result matching table (persistent)
+    st.markdown("### Result matching table")
+    if "result_df" in st.session_state:
+        result_df = st.session_state["result_df"]
+        unmatched_df = st.session_state.get("unmatched_df", pd.DataFrame())
         display_df = result_df.copy()
-        display_df["Quantity"] = pd.to_numeric(display_df["Quantity"], errors="coerce").fillna(0).astype(int)
+        display_df["Quantity"] = pd.to_numeric(
+            display_df["Quantity"], errors="coerce"
+        ).fillna(0).astype(int)
         for col in ["Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"]:
-            display_df[col] = pd.to_numeric(display_df[col], errors="coerce").fillna(0).map("{:,.0f}".format)
+            display_df[col] = pd.to_numeric(
+                display_df[col], errors="coerce"
+            ).fillna(0).map("{:,.0f}".format)
         st.dataframe(display_df, use_container_width=True)
 
+        st.subheader("Download matching file (.xlsx)")
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
             result_df.to_excel(writer, index=False, sheet_name="Matched Results")
             if not unmatched_df.empty:
                 unmatched_df.to_excel(writer, index=False, sheet_name="Unmatched Items")
         st.download_button(
-            "Download matching file (.xlsx)",
+            "Download cleaned estimation file",
             buffer.getvalue(),
             file_name="Estimation_Result_BuildWise.xlsx"
         )
     else:
-        st.info("No matching results yet. Upload an estimation file and click 'Match now' above.")
+        st.info("Run matching to see results.")
 
     # 4. Quotation generation
-    st.markdown("---")
     st.subheader("4. Quotation generation")
 
-    match_result_df = st.session_state.get("match_result_df")
-    if match_result_df is None or match_result_df.empty:
-        st.warning("Please complete the matching step first. Matching results are required to generate a quotation.")
-        return
-
-    # Select customer + inline edit
-    st.markdown("##### Select a customer")
+    # Select customer
     customers = load_customers_for(username)
     cust_labels = ["--Select customer--"] + [
         f"{c.get('name', '')} ({c.get('company', '')})" for c in customers
     ]
-    selected_cust_label = st.selectbox("Customer", cust_labels, index=0)
-
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        selected_cust_label = st.selectbox("Select customer", cust_labels, index=0)
     active_customer = None
     if selected_cust_label != "--Select customer--":
         idx = cust_labels.index(selected_cust_label) - 1
         active_customer = customers[idx]
-        st.markdown("##### Edit customer")
-        with st.form("edit_selected_customer_form_quotation"):
-            e_name = st.text_input("Customer name", value=active_customer.get("name", ""))
-            e_company = st.text_input("Company", value=active_customer.get("company", ""))
-            e_address = st.text_input("Address", value=active_customer.get("address", ""))
-            e_phone = st.text_input("Phone", value=active_customer.get("phone", ""))
-            e_email = st.text_input("Email", value=active_customer.get("email", ""))
-            e_notes = st.text_area("Notes", value=active_customer.get("notes", ""))
-            submitted = st.form_submit_button("Save customer")
-            if submitted:
-                customers[idx].update({
-                    "name": e_name.strip(),
-                    "company": e_company.strip(),
-                    "address": e_address.strip(),
-                    "phone": e_phone.strip(),
-                    "email": e_email.strip(),
-                    "notes": e_notes.strip(),
-                    "updated_at": datetime.now().isoformat()
-                })
-                save_customers_for(username, customers)
-                st.success("Customer updated.")
-                active_customer = customers[idx]
 
-    # Trading terms
-    st.markdown("##### Trading terms / Điều khoản thương mại")
+    # Edit customer inline
+    with c2:
+        if active_customer is not None:
+            if st.button("Edit selected customer"):
+                with st.form("edit_selected_customer_form_main"):
+                    e_name = st.text_input("Customer name", value=active_customer.get("name", ""))
+                    e_company = st.text_input("Company", value=active_customer.get("company", ""))
+                    e_address = st.text_input("Address", value=active_customer.get("address", ""))
+                    e_phone = st.text_input("Phone", value=active_customer.get("phone", ""))
+                    e_email = st.text_input("Email", value=active_customer.get("email", ""))
+                    e_notes = st.text_area("Notes", value=active_customer.get("notes", ""))
+                    submitted = st.form_submit_button("Save customer")
+                    if submitted:
+                        customers[idx].update({
+                            "name": e_name.strip(),
+                            "company": e_company.strip(),
+                            "address": e_address.strip(),
+                            "phone": e_phone.strip(),
+                            "email": e_email.strip(),
+                            "notes": e_notes.strip(),
+                            "updated_at": datetime.now().isoformat()
+                        })
+                        save_customers_for(username, customers)
+                        st.success("Customer updated.")
+                        st.experimental_rerun()
+
+    if active_customer is not None:
+        st.markdown("**Selected customer details:**")
+        st.write(active_customer)
+    else:
+        st.info("Please select a customer for quotation.")
+
+    # Trading terms (persistent inputs)
+    st.markdown("### Trading terms / Điều khoản thương mại")
     terms = load_trading_terms(username)
-    with st.form("trading_terms_form_quotation"):
-        payment = st.text_area("Payment / Thanh toán", value=terms.get("payment", ""), height=80)
-        delivery = st.text_input("Delivery schedule / Tiến độ", value=terms.get("delivery", ""))
-        trans_fee = st.text_input("Transportation fee / Phí vận chuyển", value=terms.get("transportation_fee", ""))
-        validity = st.text_input("Quotation validity / Hiệu lực báo giá", value=terms.get("validity", ""))
-        save_terms = st.form_submit_button("Save trading terms")
-        if save_terms:
-            new_terms = {
-                "payment": payment,
-                "delivery": delivery,
-                "transportation_fee": trans_fee,
-                "validity": validity
-            }
-            save_trading_terms(username, new_terms)
-            st.success("Trading terms saved.")
+    payment = st.text_area(
+        "Payment / Thanh toán",
+        key="payment_text",
+        value=terms.get("payment", ""),
+        height=80
+    )
+    delivery = st.text_input(
+        "Delivery schedule / Tiến độ",
+        key="delivery_text",
+        value=terms.get("delivery", "")
+    )
+    trans_fee = st.text_input(
+        "Transportation fee / Phí vận chuyển",
+        key="trans_fee_text",
+        value=terms.get("transportation_fee", "")
+    )
+    validity = st.text_input(
+        "Quotation validity / Hiệu lực báo giá",
+        key="validity_text",
+        value=terms.get("validity", "")
+    )
 
-    st.markdown("##### Generate quotation and preview")
+    if st.button("Save trading terms"):
+        new_terms = {
+            "payment": st.session_state.get("payment_text", ""),
+            "delivery": st.session_state.get("delivery_text", ""),
+            "transportation_fee": st.session_state.get("trans_fee_text", ""),
+            "validity": st.session_state.get("validity_text", "")
+        }
+        save_trading_terms(username, new_terms)
+        st.success("Trading terms saved.")
 
-    quotation_df = match_result_df.copy()
-
-    comp_file = os.path.join(user_folder, "company.json")
-    company_info = {}
-    if os.path.exists(comp_file):
-        try:
-            with open(comp_file, "r", encoding="utf-8") as f:
-                company_info = json.load(f)
-        except Exception:
-            company_info = {}
-
-    current_terms = {
-        "payment": payment if "payment" in locals() else terms.get("payment", ""),
-        "delivery": delivery if "delivery" in locals() else terms.get("delivery", ""),
-        "transportation_fee": trans_fee if "trans_fee" in locals() else terms.get("transportation_fee", ""),
-        "validity": validity if "validity" in locals() else terms.get("validity", "")
-    }
-
+    # Generate quotation using template
+    st.markdown("### Generate quotation")
     if st.button("Generate quotation (.xlsx)"):
-        if active_customer is None:
-            st.error("Please select a customer before generating a quotation.")
+        if "result_df" not in st.session_state:
+            st.error("Please run matching first.")
+        elif active_customer is None:
+            st.error("Please select a customer.")
         else:
-            excel_path = save_quotation_excel(username, quotation_df, company_info, active_customer, current_terms)
-            st.success("Quotation generated and saved.")
-            with open(excel_path, "rb") as fh:
+            # company info
+            comp_file = os.path.join(user_folder, "company.json")
+            company_info = {}
+            if os.path.exists(comp_file):
+                try:
+                    with open(comp_file, "r", encoding="utf-8") as f:
+                        company_info = json.load(f)
+                except Exception:
+                    company_info = {}
+
+            # latest terms
+            current_terms = {
+                "payment": st.session_state.get("payment_text", ""),
+                "delivery": st.session_state.get("delivery_text", ""),
+                "transportation_fee": st.session_state.get("trans_fee_text", ""),
+                "validity": st.session_state.get("validity_text", "")
+            }
+            save_trading_terms(username, current_terms)
+
+            result_df = st.session_state["result_df"]
+
+            try:
+                xlsx_buffer, saved_path = create_quotation_from_template(
+                    username,
+                    result_df,
+                    company_info,
+                    active_customer,
+                    current_terms
+                )
+            except Exception as e:
+                st.error(f"Error generating quotation from template: {e}")
+            else:
+                st.success("Quotation generated, saved to history, and ready to download.")
+                xlsx_bytes = xlsx_buffer.getvalue()
                 st.download_button(
                     "Download quotation (.xlsx)",
-                    fh.read(),
-                    file_name=os.path.basename(excel_path),
-                    key="download_quotation_excel"
+                    xlsx_bytes,
+                    file_name=os.path.basename(saved_path)
                 )
 
-    st.markdown("##### Quotation table")
-    display_q_df = quotation_df.copy()
-    display_q_df["Quantity"] = pd.to_numeric(display_q_df["Quantity"], errors="coerce").fillna(0).astype(int)
-    for col in ["Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"]:
-        display_q_df[col] = pd.to_numeric(display_q_df[col], errors="coerce").fillna(0).map("{:,.0f}".format)
-    st.dataframe(display_q_df, use_container_width=True)
+                st.markdown("#### Quotation preview (Quotation sheet)")
+                try:
+                    df_preview = preview_quotation_from_bytes(xlsx_bytes)
+                    st.dataframe(df_preview, use_container_width=True)
+                except Exception:
+                    st.info("Preview not available, but the file was generated successfully.")
+
 
 # ------------------------------
-# Sidebar navigation + match sliders
+# Sidebar navigation + match settings
 # ------------------------------
 st.sidebar.title("Navigation")
 nav_items = ["Estimation", "Customers", "Company Profile", "Quotation", "Forms and Instructions"]
@@ -1045,13 +1156,37 @@ page = st.sidebar.radio("Go to", nav_items, index=0)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Matching settings")
-th = st.sidebar.slider("Match threshold", 0, 100, st.session_state.get("match_threshold", 70))
-w_s = st.sidebar.slider("Size weight", 0.0, 1.0, st.session_state.get("weight_size", 0.45), step=0.05)
-w_c = st.sidebar.slider("Cores weight", 0.0, 1.0, st.session_state.get("weight_cores", 0.25), step=0.05)
-w_m = st.sidebar.slider("Material weight", 0.0, 1.0, st.session_state.get("weight_material", 0.30), step=0.05)
+th = st.sidebar.slider(
+    "Match threshold",
+    0, 100,
+    st.session_state.get("match_threshold", 70)
+)
+w_s = st.sidebar.slider(
+    "Size weight",
+    0.0, 1.0,
+    st.session_state.get("weight_size", 0.45),
+    step=0.05
+)
+w_c = st.sidebar.slider(
+    "Cores weight",
+    0.0, 1.0,
+    st.session_state.get("weight_cores", 0.25),
+    step=0.05
+)
+w_m = st.sidebar.slider(
+    "Material weight",
+    0.0, 1.0,
+    st.session_state.get("weight_material", 0.30),
+    step=0.05
+)
 
 if st.sidebar.button("Save matching settings"):
-    settings = {"threshold": int(th), "size": float(w_s), "cores": float(w_c), "material": float(w_m)}
+    settings = {
+        "threshold": int(th),
+        "size": float(w_s),
+        "cores": float(w_c),
+        "material": float(w_m)
+    }
     save_weights_for(username, settings)
     st.session_state["match_threshold"] = settings["threshold"]
     st.session_state["weight_size"] = settings["size"]
@@ -1059,19 +1194,17 @@ if st.sidebar.button("Save matching settings"):
     st.session_state["weight_material"] = settings["material"]
     st.sidebar.success("Settings saved.")
 
-# ------------------------------
 # Routing
-# ------------------------------
 if page == "Estimation":
     page_estimation()
 elif page == "Customers":
     page_customers()
 elif page == "Company Profile":
-    page_company_profile()
+    page_company_profile(user_folder)
 elif page == "Quotation":
     page_quotations()
 elif page == "Forms and Instructions":
     page_forms_and_instructions()
 
 st.markdown("---")
-st.caption("BuildWise — Estimation & Quotation tool (Excel only)")
+st.caption("BuildWise — Estimation & Quotation tool (Excel template version)")
