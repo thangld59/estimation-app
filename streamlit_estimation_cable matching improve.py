@@ -1,11 +1,11 @@
 # streamlit_estimation_app_final_quotation.py
-# BuildWise - Estimation & Quotation app (Excel template version)
+# BuildWise - Estimation & Quotation app (Excel only, no PDF)
 # - Login / users (users.json)
 # - Per-user price lists, customers, company profile
-# - Cable matching (same logic as previous working version)
+# - Cable matching (same logic as last working version)
 # - Trading terms
-# - Quotation generation using quotation_template.xlsx (no PDF)
-# - Quotation history + download + preview
+# - Quotation generation using external Excel template (quotation_template.xlsx)
+# - Quotation history (Excel files) + preview on web
 
 import streamlit as st
 import pandas as pd
@@ -23,7 +23,7 @@ from openpyxl import load_workbook
 USERS_FILE = "users.json"
 FORM_FOLDER = "shared_forms"
 ASSETS_FOLDER = "assets"
-TEMPLATE_FILENAME = "quotation_template.xlsx"
+QUOTATION_TEMPLATE_FILE = "quotation_template.xlsx"  # must be in same folder as this script
 
 DEFAULT_USERS = {
     "Admin123": {"password": "BuildWise2025", "role": "admin"},
@@ -37,7 +37,6 @@ def save_users(users):
     with open(USERS_FILE, "w", encoding="utf-8") as f:
         json.dump(users, f, indent=2, ensure_ascii=False)
 
-
 def load_users():
     if os.path.exists(USERS_FILE):
         try:
@@ -49,11 +48,10 @@ def load_users():
         save_users(DEFAULT_USERS)
         return DEFAULT_USERS.copy()
 
-
 USERS = load_users()
 
 # ------------------------------
-# Matching utilities (same logic)
+# Matching utilities (same logic as last working version)
 # ------------------------------
 MAIN_SIZE_RE = re.compile(r'\b(\d{1,2})\s*[cC]?\s*[x×]\s*(\d{1,3}(?:\.\d+)?)\b')
 AUX_RE = re.compile(
@@ -65,7 +63,6 @@ MATERIAL_TOKEN_RE = re.compile(
     flags=re.IGNORECASE
 )
 
-
 def clean(text: str) -> str:
     text = str(text).lower()
     text = re.sub(r"0[,.]?6kv|1[,.]?0kv", "", text)
@@ -76,7 +73,6 @@ def clean(text: str) -> str:
     text = text.replace("cáp", "").replace("cable", "").replace("dây", "")
     text = re.sub(r"\s+", " ", text).strip()
     return text
-
 
 def parse_cable_spec(text: str) -> dict:
     text = str(text).lower().replace("mm2", "").replace("mm²", "")
@@ -145,7 +141,6 @@ def parse_cable_spec(text: str) -> dict:
         "full_key": full_key
     }
 
-
 def extract_material_structure_tokens(text: str):
     text = str(text).lower()
     tokens = MATERIAL_TOKEN_RE.findall(text)
@@ -157,7 +152,6 @@ def extract_material_structure_tokens(text: str):
         else:
             norm.append(tt)
     return norm
-
 
 def material_structure_score(query_tokens, target_tokens):
     if not query_tokens and not target_tokens:
@@ -192,12 +186,9 @@ def material_structure_score(query_tokens, target_tokens):
     score = max(0.0, base - penalty)
     return score
 
-
-def combined_match_score(
-    query, q_main_key, q_aux_key, q_mats,
-    row_combined, r_main_key, r_aux_key, r_mats,
-    threshold, weights
-):
+def combined_match_score(query, q_main_key, q_aux_key, q_mats,
+                         row_combined, r_main_key, r_aux_key, r_mats,
+                         threshold, weights):
     size_score = 0.0
     cores_score = 0.0
     mat_score = 0.0
@@ -220,13 +211,10 @@ def combined_match_score(
 
     mat_score = material_structure_score(q_mats, r_mats)
 
-    final = (
-        weights["size"] * size_score
-        + weights["cores"] * cores_score
-        + weights["material"] * mat_score
-    )
+    final = (weights["size"] * size_score
+             + weights["cores"] * cores_score
+             + weights["material"] * mat_score)
     return final
-
 
 # ------------------------------
 # Streamlit setup & login
@@ -238,7 +226,6 @@ if "logged_in" not in st.session_state:
     st.session_state["username"] = ""
     st.session_state["role"] = ""
 
-
 def do_login(user: str, pwd: str):
     user = user.strip()
     if user in USERS and USERS[user]["password"] == pwd:
@@ -248,12 +235,10 @@ def do_login(user: str, pwd: str):
         return True
     return False
 
-
 def do_logout():
     st.session_state["logged_in"] = False
     st.session_state["username"] = ""
     st.session_state["role"] = ""
-
 
 if not st.session_state["logged_in"]:
     st.title("📐 BuildWise - Sign in")
@@ -264,9 +249,7 @@ if not st.session_state["logged_in"]:
         if submitted:
             ok = do_login(u, p)
             if ok:
-                st.success(
-                    f"Logged in as {st.session_state['username']} ({st.session_state['role']})"
-                )
+                st.success(f"Logged in as {st.session_state['username']} ({st.session_state['role']})")
                 st.experimental_rerun()
             else:
                 st.error("Invalid username or password. Edit users.json to add users if needed.")
@@ -287,20 +270,19 @@ with col2:
         do_logout()
         st.experimental_rerun()
 
-# Folders
+# Ensure per-user folders
 user_folder = os.path.join("user_data", username)
 os.makedirs(user_folder, exist_ok=True)
 os.makedirs(FORM_FOLDER, exist_ok=True)
 os.makedirs(os.path.join(user_folder, "quotations"), exist_ok=True)
 
 # ------------------------------
-# Matching settings (per-user)
+# Match settings (per-user)
 # ------------------------------
 def weights_file_for(user):
     folder = os.path.join("user_data", user)
     os.makedirs(folder, exist_ok=True)
     return os.path.join(folder, "weights.json")
-
 
 def load_weights_for(user):
     path = weights_file_for(user)
@@ -319,12 +301,10 @@ def load_weights_for(user):
             return defaults
     return defaults
 
-
 def save_weights_for(user, wdict):
     path = weights_file_for(user)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(wdict, f, indent=2, ensure_ascii=False)
-
 
 if "match_settings_loaded" not in st.session_state:
     st.session_state["match_settings_loaded"] = True
@@ -335,13 +315,12 @@ if "match_settings_loaded" not in st.session_state:
     st.session_state["weight_material"] = ws["material"]
 
 # ------------------------------
-# Customers & trading terms utils
+# Customers utils
 # ------------------------------
 def user_customers_file(user):
     folder = os.path.join("user_data", user)
     os.makedirs(folder, exist_ok=True)
     return os.path.join(folder, "customers.json")
-
 
 def load_customers_for(user):
     path = user_customers_file(user)
@@ -353,18 +332,18 @@ def load_customers_for(user):
             return []
     return []
 
-
 def save_customers_for(user, customers):
     path = user_customers_file(user)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(customers, f, indent=2, ensure_ascii=False)
 
-
+# ------------------------------
+# Trading terms utils
+# ------------------------------
 def trading_terms_file(user):
     folder = os.path.join("user_data", user)
     os.makedirs(folder, exist_ok=True)
     return os.path.join(folder, "trading_terms.json")
-
 
 def load_trading_terms(user):
     path = trading_terms_file(user)
@@ -385,13 +364,14 @@ def load_trading_terms(user):
             return defaults
     return defaults
 
-
 def save_trading_terms(user, data):
     path = trading_terms_file(user)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
-
+# ------------------------------
+# Helper: price list files
+# ------------------------------
 def list_price_list_files(folder_path):
     try:
         return sorted(
@@ -402,116 +382,89 @@ def list_price_list_files(folder_path):
     except Exception:
         return []
 
-
+# ------------------------------
+# Quotation helpers using template
+# ------------------------------
 def make_quotation_filename(prefix="Quotation", ext="xlsx"):
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     return f"{prefix}_{ts}.{ext}"
 
-
-# ------------------------------
-# Quotation template handling
-# ------------------------------
-def create_quotation_from_template(user, result_df, company_info, customer_info, trading_terms):
+def generate_quotation_from_template(user, result_df, company_info,
+                                     customer_info, trading_terms,
+                                     template_path=QUOTATION_TEMPLATE_FILE):
     """
-    Fill quotation_template.xlsx with company, customer, terms, and matched items,
-    then save to user history and return a BytesIO for download.
+    Use external Excel template to create a quotation:
+    - Sheet1: Quotation layout (company, customer, trading terms, grand total)
+    - Sheet2: Matched items table
     """
-    template_path = os.path.join(ASSETS_FOLDER, TEMPLATE_FILENAME)
     if not os.path.exists(template_path):
-        raise FileNotFoundError(f"Template not found at {template_path}")
-
-    grand_total = pd.to_numeric(result_df["Total"], errors="coerce").sum()
+        raise FileNotFoundError(
+            f"Quotation template '{template_path}' not found. "
+            f"Please upload it to the same folder as this app."
+        )
 
     wb = load_workbook(template_path)
-    sheet_names = wb.sheetnames
-    if len(sheet_names) < 2:
-        raise ValueError("Template must have at least two sheets (Quotation, Matched items).")
-    sh_quote = wb[sheet_names[0]]
-    sh_items = wb[sheet_names[1]]
+    ws_quote = wb.worksheets[0]  # first sheet: quotation
+    ws_items = wb.worksheets[1]  # second sheet: matched items
 
     # Company info
-    sh_quote["A1"] = company_info.get("name", "")
-    sh_quote["A2"] = company_info.get("address", "")
-    sh_quote["A3"] = company_info.get("phone", "")
-    sh_quote["A4"] = company_info.get("email", "")
+    ws_quote["A1"] = company_info.get("name", "")
+    ws_quote["A2"] = company_info.get("address", "")
+    ws_quote["A3"] = company_info.get("phone", "")
+    ws_quote["A4"] = company_info.get("email", "")
 
     # Customer info
-    sh_quote["D3"] = customer_info.get("name", "")
-    sh_quote["D4"] = customer_info.get("company", "")
-    sh_quote["D5"] = customer_info.get("address", "")
-    sh_quote["D6"] = customer_info.get("phone", "")
-    sh_quote["D7"] = customer_info.get("email", "")
+    ws_quote["D3"] = customer_info.get("name", "")
+    ws_quote["D4"] = customer_info.get("company", "")
+    ws_quote["D5"] = customer_info.get("address", "")
+    ws_quote["D6"] = customer_info.get("phone", "")
+    ws_quote["D7"] = customer_info.get("email", "")
 
     # Trading terms
-    sh_quote["A21"] = trading_terms.get("payment", "")
-    sh_quote["A22"] = trading_terms.get("delivery", "")
-    sh_quote["A23"] = trading_terms.get("transportation_fee", "")
-    sh_quote["A24"] = trading_terms.get("validity", "")
+    ws_quote["A21"] = trading_terms.get("payment", "")
+    ws_quote["A22"] = trading_terms.get("delivery", "")
+    ws_quote["A23"] = trading_terms.get("transportation_fee", "")
+    ws_quote["A24"] = trading_terms.get("validity", "")
 
-    # Grand total on Quotation sheet
-    try:
-        sh_quote["K33"] = float(grand_total)
-    except Exception:
-        sh_quote["K33"] = grand_total
+    # Matched items (Sheet2) - start row 1, column 1
+    # Drop last row (grand total row) from result_df
+    items_df = result_df.iloc[:-1].copy()
 
-    # Matched items on second sheet
-    # Skip last row of result_df (grand total row)
-    items_df = result_df.iloc[:-1].copy() if len(result_df) > 0 else result_df.copy()
+    start_row = 1
+    for idx, (_, row) in enumerate(items_df.iterrows(), start=start_row):
+        ws_items.cell(row=idx, column=1).value = row.get("Model", "")
+        ws_items.cell(row=idx, column=2).value = row.get("Description (requested)", "")
+        ws_items.cell(row=idx, column=3).value = row.get("Description (proposed)", "")
+        ws_items.cell(row=idx, column=4).value = row.get("Specification", "")
+        ws_items.cell(row=idx, column=5).value = row.get("Unit", "")
+        # numeric values
+        ws_items.cell(row=idx, column=6).value = float(row.get("Quantity", 0) or 0)
+        ws_items.cell(row=idx, column=7).value = float(row.get("Material Cost", 0) or 0)
+        ws_items.cell(row=idx, column=8).value = float(row.get("Labour Cost", 0) or 0)
+        ws_items.cell(row=idx, column=9).value = float(row.get("Amount Material", 0) or 0)
+        ws_items.cell(row=idx, column=10).value = float(row.get("Amount Labour", 0) or 0)
+        ws_items.cell(row=idx, column=11).value = float(row.get("Total", 0) or 0)
 
-    # Clear old data in rows 2..40 for columns A..K (keep header/format in row 1)
-    max_row_to_clear = 40
-    for r in range(2, max_row_to_clear + 1):
-        for c in range(1, 12):
-            sh_items.cell(row=r, column=c, value=None)
+    # Grand total in quotation sheet K33
+    grand_total = pd.to_numeric(result_df["Total"], errors="coerce").sum()
+    ws_quote["K33"] = float(grand_total)
 
-    # Write rows starting from row 2
-    for idx, (_, row) in enumerate(items_df.iterrows(), start=2):
-        sh_items.cell(row=idx, column=1, value=row.get("Model", ""))
-        sh_items.cell(row=idx, column=2, value=row.get("Description (requested)", ""))
-        sh_items.cell(row=idx, column=3, value=row.get("Description (proposed)", ""))
-        sh_items.cell(row=idx, column=4, value=row.get("Specification", ""))
-        sh_items.cell(row=idx, column=5, value=row.get("Unit", ""))
-        sh_items.cell(row=idx, column=6, value=float(row.get("Quantity", 0) or 0))
-        sh_items.cell(row=idx, column=7, value=float(row.get("Material Cost", 0) or 0))
-        sh_items.cell(row=idx, column=8, value=float(row.get("Labour Cost", 0) or 0))
-        sh_items.cell(row=idx, column=9, value=float(row.get("Amount Material", 0) or 0))
-        sh_items.cell(row=idx, column=10, value=float(row.get("Amount Labour", 0) or 0))
-        sh_items.cell(row=idx, column=11, value=float(row.get("Total", 0) or 0))
-
-    # Save to buffer
-    output = BytesIO()
-    wb.save(output)
-    output.seek(0)
-
-    # Also save to user's quotation history
+    # Save to user's quotations folder
     q_folder = os.path.join("user_data", user, "quotations")
     os.makedirs(q_folder, exist_ok=True)
     filename = make_quotation_filename("Quotation", "xlsx")
-    path = os.path.join(q_folder, filename)
-    with open(path, "wb") as f:
-        f.write(output.getvalue())
+    out_path = os.path.join(q_folder, filename)
+    wb.save(out_path)
 
-    return output, path
+    # For preview: read first sheet back as DataFrame
+    preview_df = pd.read_excel(out_path, sheet_name=0)
 
-
-def preview_quotation_from_bytes(xlsx_bytes):
-    """
-    Load Quotation sheet from xlsx bytes and show as a pandas DataFrame (for preview).
-    """
-    buffer = BytesIO(xlsx_bytes)
-    wb = load_workbook(buffer, data_only=True)
-    sh_quote = wb[wb.sheetnames[0]]
-    data = []
-    for row in sh_quote.iter_rows(values_only=True):
-        data.append(list(row))
-    df = pd.DataFrame(data)
-    return df
-
+    return out_path, preview_df
 
 # ------------------------------
-# Pages
+# Pages: Company profile
 # ------------------------------
-def page_company_profile(user_folder):
+def page_company_profile():
     st.subheader("🏢 Company Profile")
     comp_file = os.path.join(user_folder, "company.json")
     profile = {}
@@ -538,7 +491,9 @@ def page_company_profile(user_folder):
             json.dump(data, f, indent=2, ensure_ascii=False)
         st.success("Company profile saved.")
 
-
+# ------------------------------
+# Pages: Customers
+# ------------------------------
 def page_customers():
     st.subheader("👥 Customers")
 
@@ -550,7 +505,9 @@ def page_customers():
             d for d in os.listdir(base)
             if os.path.isdir(os.path.join(base, d))
         )
-        chosen_user = st.selectbox("Select user", ["--Select--"] + user_dirs, index=0)
+        chosen_user = st.selectbox("Select user",
+                                   ["--Select--"] + user_dirs,
+                                   index=0)
         if chosen_user != "--Select--":
             customers = load_customers_for(chosen_user)
             owner = chosen_user
@@ -561,7 +518,6 @@ def page_customers():
         customers = load_customers_for(username)
         owner = username
 
-    # Add new customer
     with st.expander("Add new customer", expanded=False):
         c_name = st.text_input("Customer name")
         c_company = st.text_input("Company")
@@ -649,7 +605,9 @@ def page_customers():
         st.success("Customer deleted.")
         st.experimental_rerun()
 
-
+# ------------------------------
+# Pages: Forms & Instructions
+# ------------------------------
 def page_forms_and_instructions():
     st.subheader("📂 Forms and Instructions")
     st.write("Shared templates and forms. Admin can upload; all users can download.")
@@ -694,7 +652,9 @@ def page_forms_and_instructions():
         else:
             st.info("No forms available.")
 
-
+# ------------------------------
+# Pages: Quotations history
+# ------------------------------
 def page_quotations():
     st.subheader("📄 Quotations")
     q_folder = os.path.join(user_folder, "quotations")
@@ -719,10 +679,15 @@ def page_quotations():
                 st.success("Deleted.")
                 st.experimental_rerun()
 
-
+# ------------------------------
+# Page: Estimation (main)
+# ------------------------------
 def page_estimation():
-    # 1. Upload price lists
-    st.subheader("1. Upload Price List Files")
+    # Initialize session state for matching
+    if "match_result_json" not in st.session_state:
+        st.session_state["match_result_json"] = None
+
+    st.subheader("1. Upload price list files")
     uploads = st.file_uploader(
         "Upload one or more price list Excel files (.xlsx)",
         type=["xlsx"],
@@ -738,15 +703,14 @@ def page_estimation():
                 st.error(f"Error saving {f.name}: {e}")
         st.success("Price lists uploaded.")
 
-    # 2. Manage price lists
-    st.subheader("2. Manage Price Lists")
+    st.subheader("2. Manage price lists")
     price_list_files = list_price_list_files(user_folder)
     if price_list_files:
         st.write("Your price lists:")
         for f in price_list_files:
             st.write(f"- {f}")
     else:
-        st.info("No price lists uploaded yet.")
+        st.info("No price lists uploaded.")
 
     selected_file = st.radio(
         "Choose one price list or use all",
@@ -772,16 +736,17 @@ def page_estimation():
                     except Exception as e:
                         st.error(f"Error deleting file: {e}")
 
-    # 3. Matching estimation request
-    st.subheader("3. Matching Estimation Request File")
+    st.subheader("3. Matching estimation request file")
+
     estimation_file = st.file_uploader(
         "Upload estimation request (.xlsx)",
         type=["xlsx"],
         key="estimation_file_main"
     )
 
-    run_matching = st.button("Match now")
+    match_button = st.button("Match now")
 
+    # Matching settings (from session)
     match_threshold = st.session_state.get("match_threshold", 70)
     w_size = st.session_state.get("weight_size", 0.45)
     w_cores = st.session_state.get("weight_cores", 0.25)
@@ -795,7 +760,8 @@ def page_estimation():
         "material": w_material / total_w
     }
 
-    if run_matching:
+    # Run matching when button pressed
+    if match_button:
         if estimation_file is None:
             st.error("Please upload an estimation file first.")
         elif not price_list_files:
@@ -823,7 +789,7 @@ def page_estimation():
                     est["aux_key"] = parsed_est.apply(lambda d: d["aux_key"])
                     est["materials"] = base_est.apply(extract_material_structure_tokens)
 
-                    # build DB
+                    # Read DB(s)
                     if selected_file == "All files":
                         frames = []
                         for f in price_list_files:
@@ -908,9 +874,7 @@ def page_estimation():
 
                                 if best is None:
                                     c2 = db.copy()
-                                    c2["score"] = c2["combined"].apply(
-                                        lambda x: fuzz.token_set_ratio(query, x)
-                                    )
+                                    c2["score"] = c2["combined"].apply(lambda x: fuzz.token_set_ratio(query, x))
                                     top3 = c2.sort_values("score", ascending=False).head(1)
                                     if not top3.empty:
                                         best = top3.iloc[0]
@@ -940,11 +904,12 @@ def page_estimation():
                                 amt_lab = qty_num * l_cost
                                 total = amt_mat + amt_lab
 
+                                # Model + Specification from matched price list
                                 results.append([
-                                    matched_model,
-                                    row[est_cols[1]],
-                                    matched_desc,
-                                    matched_spec,
+                                    matched_model,                # Model (matched)
+                                    row[est_cols[1]],             # Description (requested)
+                                    matched_desc,                 # Description (proposed)
+                                    matched_spec,                 # Specification (matched)
                                     unit,
                                     qty_num,
                                     m_cost,
@@ -970,136 +935,119 @@ def page_estimation():
                                     "Total"
                                 ]
                             )
-
                             grand_total = pd.to_numeric(result_df["Total"], errors="coerce").sum()
                             result_df.loc[len(result_df.index)] = [""] * 10 + [grand_total]
 
-                            unmatched_df = result_df[result_df["Description (proposed)"] == ""]
+                            # Store in session for persistence
+                            st.session_state["match_result_json"] = result_df.to_json(orient="split")
+                            st.success("Matching completed. Results are shown below and stay visible while editing customer and terms.")
 
-                            st.session_state["result_df"] = result_df
-                            st.session_state["unmatched_df"] = unmatched_df
+    # Display matching results (if exist in session)
+    result_df = None
+    if st.session_state.get("match_result_json"):
+        result_df = pd.read_json(st.session_state["match_result_json"], orient="split")
 
-    # Show result matching table (persistent)
-    st.markdown("### Result matching table")
-    if "result_df" in st.session_state:
-        result_df = st.session_state["result_df"]
-        unmatched_df = st.session_state.get("unmatched_df", pd.DataFrame())
+        st.markdown("### Result matching table")
         display_df = result_df.copy()
-        display_df["Quantity"] = pd.to_numeric(
-            display_df["Quantity"], errors="coerce"
-        ).fillna(0).astype(int)
+        display_df["Quantity"] = pd.to_numeric(display_df["Quantity"], errors="coerce").fillna(0).astype(int)
         for col in ["Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"]:
-            display_df[col] = pd.to_numeric(
-                display_df[col], errors="coerce"
-            ).fillna(0).map("{:,.0f}".format)
+            display_df[col] = pd.to_numeric(display_df[col], errors="coerce").fillna(0).map("{:,.0f}".format)
         st.dataframe(display_df, use_container_width=True)
 
-        st.subheader("Download matching file (.xlsx)")
+        # Unmatched
+        st.markdown("#### Unmatched rows")
+        unmatched_df = result_df[result_df["Description (proposed)"] == ""]
+        if unmatched_df.empty:
+            st.info("All rows matched.")
+        else:
+            st.dataframe(unmatched_df, use_container_width=True)
+
+        # Download matching file (.xlsx)
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
             result_df.to_excel(writer, index=False, sheet_name="Matched Results")
             if not unmatched_df.empty:
                 unmatched_df.to_excel(writer, index=False, sheet_name="Unmatched Items")
         st.download_button(
-            "Download cleaned estimation file",
+            "Download matching file (.xlsx)",
             buffer.getvalue(),
             file_name="Estimation_Result_BuildWise.xlsx"
         )
     else:
-        st.info("Run matching to see results.")
+        st.info("Run matching to see the result table here.")
 
+    # ------------------------------
     # 4. Quotation generation
+    # ------------------------------
     st.subheader("4. Quotation generation")
 
-    # Select customer
+    # Load customers
     customers = load_customers_for(username)
-    cust_labels = ["--Select customer--"] + [
+    cust_labels = ["--No customer--"] + [
         f"{c.get('name', '')} ({c.get('company', '')})" for c in customers
     ]
-    c1, c2 = st.columns([3, 1])
-    with c1:
-        selected_cust_label = st.selectbox("Select customer", cust_labels, index=0)
+    selected_cust_label = st.selectbox("Select a customer", cust_labels, index=0)
+
     active_customer = None
-    if selected_cust_label != "--Select customer--":
-        idx = cust_labels.index(selected_cust_label) - 1
-        active_customer = customers[idx]
+    if selected_cust_label != "--No customer--":
+        idx_c = cust_labels.index(selected_cust_label) - 1
+        active_customer = customers[idx_c]
 
-    # Edit customer inline
-    with c2:
-        if active_customer is not None:
-            if st.button("Edit selected customer"):
-                with st.form("edit_selected_customer_form_main"):
-                    e_name = st.text_input("Customer name", value=active_customer.get("name", ""))
-                    e_company = st.text_input("Company", value=active_customer.get("company", ""))
-                    e_address = st.text_input("Address", value=active_customer.get("address", ""))
-                    e_phone = st.text_input("Phone", value=active_customer.get("phone", ""))
-                    e_email = st.text_input("Email", value=active_customer.get("email", ""))
-                    e_notes = st.text_area("Notes", value=active_customer.get("notes", ""))
-                    submitted = st.form_submit_button("Save customer")
-                    if submitted:
-                        customers[idx].update({
-                            "name": e_name.strip(),
-                            "company": e_company.strip(),
-                            "address": e_address.strip(),
-                            "phone": e_phone.strip(),
-                            "email": e_email.strip(),
-                            "notes": e_notes.strip(),
-                            "updated_at": datetime.now().isoformat()
-                        })
-                        save_customers_for(username, customers)
-                        st.success("Customer updated.")
-                        st.experimental_rerun()
-
-    if active_customer is not None:
-        st.markdown("**Selected customer details:**")
-        st.write(active_customer)
+        st.markdown("#### Edit customer")
+        with st.form("edit_customer_inline"):
+            e_name = st.text_input("Customer name", value=active_customer.get("name", ""))
+            e_company = st.text_input("Company", value=active_customer.get("company", ""))
+            e_address = st.text_input("Address", value=active_customer.get("address", ""))
+            e_phone = st.text_input("Phone", value=active_customer.get("phone", ""))
+            e_email = st.text_input("Email", value=active_customer.get("email", ""))
+            e_notes = st.text_area("Notes", value=active_customer.get("notes", ""))
+            submit_edit = st.form_submit_button("Save customer")
+            if submit_edit:
+                customers[idx_c].update({
+                    "name": e_name.strip(),
+                    "company": e_company.strip(),
+                    "address": e_address.strip(),
+                    "phone": e_phone.strip(),
+                    "email": e_email.strip(),
+                    "notes": e_notes.strip(),
+                    "updated_at": datetime.now().isoformat()
+                })
+                save_customers_for(username, customers)
+                st.success("Customer updated.")
+                active_customer = customers[idx_c]
     else:
-        st.info("Please select a customer for quotation.")
+        st.info("Select a customer to attach to the quotation.")
 
-    # Trading terms (persistent inputs)
-    st.markdown("### Trading terms / Điều khoản thương mại")
+    # Trading terms
+    st.markdown("#### Trading terms / Điều khoản thương mại")
     terms = load_trading_terms(username)
-    payment = st.text_area(
-        "Payment / Thanh toán",
-        key="payment_text",
-        value=terms.get("payment", ""),
-        height=80
-    )
-    delivery = st.text_input(
-        "Delivery schedule / Tiến độ",
-        key="delivery_text",
-        value=terms.get("delivery", "")
-    )
-    trans_fee = st.text_input(
-        "Transportation fee / Phí vận chuyển",
-        key="trans_fee_text",
-        value=terms.get("transportation_fee", "")
-    )
-    validity = st.text_input(
-        "Quotation validity / Hiệu lực báo giá",
-        key="validity_text",
-        value=terms.get("validity", "")
-    )
+    with st.form("trading_terms_form_main"):
+        payment = st.text_area("Payment / Thanh toán", value=terms.get("payment", ""), height=80)
+        delivery = st.text_input("Delivery schedule / Tiến độ", value=terms.get("delivery", ""))
+        trans_fee = st.text_input("Transportation fee / Phí vận chuyển", value=terms.get("transportation_fee", ""))
+        validity = st.text_input("Quotation validity / Hiệu lực báo giá", value=terms.get("validity", ""))
+        save_terms = st.form_submit_button("Save trading terms")
+        if save_terms:
+            new_terms = {
+                "payment": payment,
+                "delivery": delivery,
+                "transportation_fee": trans_fee,
+                "validity": validity
+            }
+            save_trading_terms(username, new_terms)
+            st.success("Trading terms saved.")
+            terms = new_terms
 
-    if st.button("Save trading terms"):
-        new_terms = {
-            "payment": st.session_state.get("payment_text", ""),
-            "delivery": st.session_state.get("delivery_text", ""),
-            "transportation_fee": st.session_state.get("trans_fee_text", ""),
-            "validity": st.session_state.get("validity_text", "")
-        }
-        save_trading_terms(username, new_terms)
-        st.success("Trading terms saved.")
+    st.markdown("#### Generate quotation")
 
-    # Generate quotation using template
-    st.markdown("### Generate quotation")
-    if st.button("Generate quotation (.xlsx)"):
-        if "result_df" not in st.session_state:
-            st.error("Please run matching first.")
+    gen_button = st.button("Generate quotation (.xlsx)")
+    if gen_button:
+        if result_df is None:
+            st.error("Please run matching first before generating a quotation.")
         elif active_customer is None:
-            st.error("Please select a customer.")
+            st.error("Please select a customer before generating a quotation.")
         else:
-            # company info
+            # Load company info
             comp_file = os.path.join(user_folder, "company.json")
             company_info = {}
             if os.path.exists(comp_file):
@@ -1109,46 +1057,39 @@ def page_estimation():
                 except Exception:
                     company_info = {}
 
-            # latest terms
-            current_terms = {
-                "payment": st.session_state.get("payment_text", ""),
-                "delivery": st.session_state.get("delivery_text", ""),
-                "transportation_fee": st.session_state.get("trans_fee_text", ""),
-                "validity": st.session_state.get("validity_text", "")
-            }
-            save_trading_terms(username, current_terms)
-
-            result_df = st.session_state["result_df"]
+            # Use current trading terms (latest edited or saved)
+            current_terms = terms
 
             try:
-                xlsx_buffer, saved_path = create_quotation_from_template(
+                q_path, preview_df = generate_quotation_from_template(
                     username,
                     result_df,
                     company_info,
                     active_customer,
-                    current_terms
+                    current_terms,
+                    template_path=QUOTATION_TEMPLATE_FILE
                 )
-            except Exception as e:
-                st.error(f"Error generating quotation from template: {e}")
-            else:
-                st.success("Quotation generated, saved to history, and ready to download.")
-                xlsx_bytes = xlsx_buffer.getvalue()
+            except FileNotFoundError as e:
+                st.error(str(e))
+                q_path = None
+                preview_df = None
+
+            if q_path and preview_df is not None:
+                st.success("Quotation generated and saved to your quotation history.")
+                st.markdown("#### Quotation preview (from template)")
+                st.dataframe(preview_df, use_container_width=True)
+
+                with open(q_path, "rb") as fh:
+                    data = fh.read()
                 st.download_button(
                     "Download quotation (.xlsx)",
-                    xlsx_bytes,
-                    file_name=os.path.basename(saved_path)
+                    data,
+                    file_name=os.path.basename(q_path),
+                    key="download_quotation_xlsx"
                 )
 
-                st.markdown("#### Quotation preview (Quotation sheet)")
-                try:
-                    df_preview = preview_quotation_from_bytes(xlsx_bytes)
-                    st.dataframe(df_preview, use_container_width=True)
-                except Exception:
-                    st.info("Preview not available, but the file was generated successfully.")
-
-
 # ------------------------------
-# Sidebar navigation + match settings
+# Sidebar navigation + matching sliders
 # ------------------------------
 st.sidebar.title("Navigation")
 nav_items = ["Estimation", "Customers", "Company Profile", "Quotation", "Forms and Instructions"]
@@ -1156,37 +1097,13 @@ page = st.sidebar.radio("Go to", nav_items, index=0)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Matching settings")
-th = st.sidebar.slider(
-    "Match threshold",
-    0, 100,
-    st.session_state.get("match_threshold", 70)
-)
-w_s = st.sidebar.slider(
-    "Size weight",
-    0.0, 1.0,
-    st.session_state.get("weight_size", 0.45),
-    step=0.05
-)
-w_c = st.sidebar.slider(
-    "Cores weight",
-    0.0, 1.0,
-    st.session_state.get("weight_cores", 0.25),
-    step=0.05
-)
-w_m = st.sidebar.slider(
-    "Material weight",
-    0.0, 1.0,
-    st.session_state.get("weight_material", 0.30),
-    step=0.05
-)
+th = st.sidebar.slider("Match threshold", 0, 100, st.session_state.get("match_threshold", 70))
+w_s = st.sidebar.slider("Size weight", 0.0, 1.0, st.session_state.get("weight_size", 0.45), step=0.05)
+w_c = st.sidebar.slider("Cores weight", 0.0, 1.0, st.session_state.get("weight_cores", 0.25), step=0.05)
+w_m = st.sidebar.slider("Material weight", 0.0, 1.0, st.session_state.get("weight_material", 0.30), step=0.05)
 
 if st.sidebar.button("Save matching settings"):
-    settings = {
-        "threshold": int(th),
-        "size": float(w_s),
-        "cores": float(w_c),
-        "material": float(w_m)
-    }
+    settings = {"threshold": int(th), "size": float(w_s), "cores": float(w_c), "material": float(w_m)}
     save_weights_for(username, settings)
     st.session_state["match_threshold"] = settings["threshold"]
     st.session_state["weight_size"] = settings["size"]
@@ -1194,17 +1111,19 @@ if st.sidebar.button("Save matching settings"):
     st.session_state["weight_material"] = settings["material"]
     st.sidebar.success("Settings saved.")
 
+# ------------------------------
 # Routing
+# ------------------------------
 if page == "Estimation":
     page_estimation()
 elif page == "Customers":
     page_customers()
 elif page == "Company Profile":
-    page_company_profile(user_folder)
+    page_company_profile()
 elif page == "Quotation":
     page_quotations()
 elif page == "Forms and Instructions":
     page_forms_and_instructions()
 
 st.markdown("---")
-st.caption("BuildWise — Estimation & Quotation tool (Excel template version)")
+st.caption("BuildWise — Estimation & Quotation tool (Excel template based)")
