@@ -1,5 +1,12 @@
 # streamlit_estimation_app_final_quotation.py
-# BuildWise - Estimation & Quotation app (Excel template only, no PDF)
+# BuildWise - Estimation & Quotation (Excel only, with template)
+# - Login / user management
+# - Per-user price lists
+# - Customers & company profile
+# - Cable matching (same logic as last good version)
+# - Quotation generation using quotation_template.xlsx
+# - Quotation preview + Download + Save to history
+# - No PDF generation
 
 import streamlit as st
 import pandas as pd
@@ -12,11 +19,10 @@ from rapidfuzz import fuzz
 from openpyxl import load_workbook
 
 # ------------------------------
-# Constants / folders
+# Constants / paths
 # ------------------------------
 USERS_FILE = "users.json"
 FORM_FOLDER = "shared_forms"
-ASSETS_FOLDER = "assets"
 TEMPLATE_FILE = "quotation_template.xlsx"
 
 DEFAULT_USERS = {
@@ -45,16 +51,16 @@ def load_users():
 USERS = load_users()
 
 # ------------------------------
-# Matching utilities (same logic)
+# Matching utilities (unchanged logic)
 # ------------------------------
-MAIN_SIZE_RE = re.compile(r'\b(\d{1,2})\s*[cC]?\s*[x×]\s*(\d{1,3}(?:\.\d+)?)\b')
+MAIN_SIZE_RE = re.compile(r"\b(\d{1,2})\s*[cC]?\s*[x×]\s*(\d{1,3}(?:\.\d+)?)\b")
 AUX_RE = re.compile(
-    r'\+\s*(?:([1-9]\d*)\s*[cC]?\s*[x×]\s*)?((?:pe|e|n))?(\d{1,3}(?:\.\d+)?)',
-    flags=re.IGNORECASE
+    r"\+\s*(?:([1-9]\d*)\s*[cC]?\s*[x×]\s*)?((?:pe|e|n))?(\d{1,3}(?:\.\d+)?)",
+    flags=re.IGNORECASE,
 )
 MATERIAL_TOKEN_RE = re.compile(
-    r'(cu|aluminium|al|xlpe|pvc|pe|lszh|hdpe|dsta|sta|swa)',
-    flags=re.IGNORECASE
+    r"(cu|aluminium|al|xlpe|pvc|pe|lszh|hdpe|dsta|sta|swa)",
+    flags=re.IGNORECASE,
 )
 
 def clean(text: str) -> str:
@@ -113,7 +119,8 @@ def parse_cable_spec(text: str) -> dict:
 
     main_key = (
         f"{int(main_cores)}x{int(main_size) if main_size and float(main_size).is_integer() else main_size}"
-        if main_cores and main_size else ""
+        if main_cores and main_size
+        else ""
     )
 
     if aux_type and aux_size:
@@ -132,7 +139,7 @@ def parse_cable_spec(text: str) -> dict:
         "aux_size": aux_size,
         "main_key": main_key,
         "aux_key": aux_key,
-        "full_key": full_key
+        "full_key": full_key,
     }
 
 def extract_material_structure_tokens(text: str):
@@ -154,10 +161,16 @@ def material_structure_score(query_tokens, target_tokens):
         return 0.0
 
     weights_map = {
-        "cu": 1.0, "al": 1.0,
-        "xlpe": 0.9, "pvc": 0.7,
-        "lszh": 0.6, "pe": 0.5, "hdpe": 0.5,
-        "dsta": 0.4, "sta": 0.4, "swa": 0.4
+        "cu": 1.0,
+        "al": 1.0,
+        "xlpe": 0.9,
+        "pvc": 0.7,
+        "lszh": 0.6,
+        "pe": 0.5,
+        "hdpe": 0.5,
+        "dsta": 0.4,
+        "sta": 0.4,
+        "swa": 0.4,
     }
 
     q_set = list(dict.fromkeys(query_tokens))
@@ -180,9 +193,18 @@ def material_structure_score(query_tokens, target_tokens):
     score = max(0.0, base - penalty)
     return score
 
-def combined_match_score(query, q_main_key, q_aux_key, q_mats,
-                         row_combined, r_main_key, r_aux_key, r_mats,
-                         threshold, weights):
+def combined_match_score(
+    query,
+    q_main_key,
+    q_aux_key,
+    q_mats,
+    row_combined,
+    r_main_key,
+    r_aux_key,
+    r_mats,
+    threshold,
+    weights,
+):
     size_score = 0.0
     cores_score = 0.0
     mat_score = 0.0
@@ -205,9 +227,11 @@ def combined_match_score(query, q_main_key, q_aux_key, q_mats,
 
     mat_score = material_structure_score(q_mats, r_mats)
 
-    final = (weights["size"] * size_score
-             + weights["cores"] * cores_score
-             + weights["material"] * mat_score)
+    final = (
+        weights["size"] * size_score
+        + weights["cores"] * cores_score
+        + weights["material"] * mat_score
+    )
     return final
 
 # ------------------------------
@@ -243,10 +267,12 @@ if not st.session_state["logged_in"]:
         if submitted:
             ok = do_login(u, p)
             if ok:
-                st.success(f"Logged in as {st.session_state['username']} ({st.session_state['role']})")
+                st.success(
+                    f"Logged in as {st.session_state['username']} ({st.session_state['role']})"
+                )
                 st.experimental_rerun()
             else:
-                st.error("Invalid username or password. Edit users.json to add users if needed.")
+                st.error("Invalid username or password. Edit users.json to add users.")
     st.stop()
 
 username = st.session_state["username"]
@@ -255,9 +281,8 @@ role = st.session_state["role"]
 # header
 col1, col2 = st.columns([8, 1])
 with col1:
-    logo_path = os.path.join(ASSETS_FOLDER, "logo.png")
-    if os.path.exists(logo_path):
-        st.image(logo_path, width=120)
+    if os.path.exists("assets/logo.png"):
+        st.image("assets/logo.png", width=120)
     st.markdown("## :triangular_ruler: BuildWise - Smart Estimation Tool")
 with col2:
     if st.button("Logout"):
@@ -271,7 +296,7 @@ os.makedirs(FORM_FOLDER, exist_ok=True)
 os.makedirs(os.path.join(user_folder, "quotations"), exist_ok=True)
 
 # ------------------------------
-# Matching settings (per-user)
+# Match settings (per-user)
 # ------------------------------
 def weights_file_for(user):
     folder = os.path.join("user_data", user)
@@ -285,12 +310,12 @@ def load_weights_for(user):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                return {
-                    "threshold": int(data.get("threshold", defaults["threshold"])),
-                    "size": float(data.get("size", defaults["size"])),
-                    "cores": float(data.get("cores", defaults["cores"])),
-                    "material": float(data.get("material", defaults["material"]))
-                }
+            return {
+                "threshold": int(data.get("threshold", defaults["threshold"])),
+                "size": float(data.get("size", defaults["size"])),
+                "cores": float(data.get("cores", defaults["cores"])),
+                "material": float(data.get("material", defaults["material"])),
+            }
         except Exception:
             return defaults
     return defaults
@@ -309,7 +334,7 @@ if "match_settings_loaded" not in st.session_state:
     st.session_state["weight_material"] = ws["material"]
 
 # ------------------------------
-# Customers & trading terms
+# Customers / trading terms
 # ------------------------------
 def user_customers_file(user):
     folder = os.path.join("user_data", user)
@@ -342,15 +367,15 @@ def load_trading_terms(user):
         "payment": "",
         "delivery": "",
         "transportation_fee": "",
-        "validity": ""
+        "validity": "",
     }
     if os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 d = json.load(f)
-                for k in defaults:
-                    defaults[k] = d.get(k, defaults[k])
-                return defaults
+            for k in defaults:
+                defaults[k] = d.get(k, defaults[k])
+            return defaults
         except Exception:
             return defaults
     return defaults
@@ -361,17 +386,136 @@ def save_trading_terms(user, data):
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 # ------------------------------
-# Helper: price list files
+# Price list helpers
 # ------------------------------
 def list_price_list_files(folder_path):
     try:
         return sorted(
-            f for f in os.listdir(folder_path)
+            f
+            for f in os.listdir(folder_path)
             if os.path.isfile(os.path.join(folder_path, f))
             and f.lower().endswith((".xlsx", ".xls"))
+            and f != TEMPLATE_FILE
         )
     except Exception:
         return []
+
+# ------------------------------
+# Quotation helpers using template
+# ------------------------------
+def generate_quotation_from_template(
+    template_path,
+    result_df,
+    company_info,
+    customer_info,
+    trading_terms,
+):
+    """
+    Fill quotation_template.xlsx:
+    - Sheet1 (Quotation): company, customer, terms, date, quotation number, grand total (G12)
+    - Sheet2 (Matched items): data from result_df starting at A2, sum Total -> grand total
+    Returns: bytes of filled workbook.
+    """
+    if not os.path.exists(template_path):
+        raise FileNotFoundError(
+            f"Quotation template '{template_path}' not found. Place it next to this app."
+        )
+
+    wb = load_workbook(template_path)
+    # Try to get sheets by name, fallback by index
+    try:
+        ws_quote = wb["Quotation"]
+    except KeyError:
+        ws_quote = wb.worksheets[0]
+    try:
+        ws_items = wb["Matched items"]
+    except KeyError:
+        ws_items = wb.worksheets[1]
+
+    # company info
+    ws_quote["B2"] = company_info.get("name", "")
+    ws_quote["B3"] = company_info.get("address", "")
+    ws_quote["B4"] = company_info.get("phone", "")
+    ws_quote["B5"] = company_info.get("email", "")
+    ws_quote["B6"] = datetime.now().strftime("%Y-%m-%d")
+    ws_quote["B7"] = "QT-" + datetime.now().strftime("%Y%m%d-%H%M%S")
+
+    # customer info
+    ws_quote["E3"] = customer_info.get("company", "")
+    ws_quote["E4"] = customer_info.get("name", "")
+    ws_quote["E5"] = customer_info.get("phone", "")
+    ws_quote["E6"] = customer_info.get("email", "")
+    ws_quote["E7"] = customer_info.get("address", "")
+
+    # trading terms
+    ws_quote["C21"] = trading_terms.get("payment", "")
+    ws_quote["C22"] = trading_terms.get("delivery", "")
+    ws_quote["C23"] = trading_terms.get("transportation_fee", "")
+    ws_quote["C24"] = trading_terms.get("validity", "")
+
+    # matched items in sheet2, starting A2
+    # exclude last row if it is grand total row
+    df = result_df.copy()
+    if len(df) > 0:
+        # detect if last row is grand total row
+        last = df.iloc[-1]
+        if (
+            str(last.get("Model", "")).strip() == ""
+            and str(last.get("Description (requested)", "")).strip() == ""
+        ):
+            df = df.iloc[:-1]
+
+    start_row = 2
+    # optional: clear existing rows (simple approach)
+    max_rows_to_clear = 500
+    for r in range(start_row, start_row + max_rows_to_clear):
+        for c in range(1, 12):
+            ws_items.cell(row=r, column=c, value=None)
+
+    grand_total = 0.0
+    for idx, (_, r) in enumerate(df.iterrows()):
+        excel_row = start_row + idx
+        ws_items.cell(row=excel_row, column=1, value=r.get("Model", ""))
+        ws_items.cell(
+            row=excel_row,
+            column=2,
+            value=r.get("Description (requested)", ""),
+        )
+        ws_items.cell(
+            row=excel_row,
+            column=3,
+            value=r.get("Description (proposed)", ""),
+        )
+        ws_items.cell(row=excel_row, column=4, value=r.get("Specification", ""))
+        ws_items.cell(row=excel_row, column=5, value=r.get("Unit", ""))
+        ws_items.cell(row=excel_row, column=6, value=r.get("Quantity", 0))
+        ws_items.cell(row=excel_row, column=7, value=r.get("Material Cost", 0))
+        ws_items.cell(row=excel_row, column=8, value=r.get("Labour Cost", 0))
+        ws_items.cell(
+            row=excel_row, column=9, value=r.get("Amount Material", 0)
+        )
+        ws_items.cell(
+            row=excel_row, column=10, value=r.get("Amount Labour", 0)
+        )
+        total_val = r.get("Total", 0)
+        try:
+            total_num = float(total_val)
+        except Exception:
+            total_num = 0.0
+        ws_items.cell(row=excel_row, column=11, value=total_num)
+        grand_total += total_num
+
+    # write grand total to Sheet1 G12
+    ws_quote["G12"] = grand_total
+
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+def make_quotation_filename():
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"Quotation_{ts}.xlsx"
 
 # ------------------------------
 # Company profile
@@ -403,134 +547,129 @@ def page_company_profile():
             json.dump(data, f, indent=2, ensure_ascii=False)
         st.success("Company profile saved.")
 
-def load_company_profile(user):
-    comp_file = os.path.join("user_data", user, "company.json")
-    if os.path.exists(comp_file):
-        try:
-            with open(comp_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
-    return {}
-
 # ------------------------------
-# Customers page
+# Customers page (fixed edit/save)
 # ------------------------------
 def page_customers():
     st.subheader("👥 Customers")
 
     if role == "admin":
-        st.info("Admin: choose a user to view their customers.")
+        st.info("Admin: view customers of each user.")
         base = "user_data"
         os.makedirs(base, exist_ok=True)
         user_dirs = sorted(
-            d for d in os.listdir(base)
-            if os.path.isdir(os.path.join(base, d))
+            d for d in os.listdir(base) if os.path.isdir(os.path.join(base, d))
         )
-        chosen_user = st.selectbox("Select user", ["--Select--"] + user_dirs, index=0)
-        if chosen_user != "--Select--":
-            customers = load_customers_for(chosen_user)
-            owner = chosen_user
-        else:
-            customers = []
-            owner = None
+        chosen_user = st.selectbox("Select user", ["--Select--"] + user_dirs)
+        if chosen_user == "--Select--":
+            return
+        owner = chosen_user
     else:
-        customers = load_customers_for(username)
         owner = username
 
-    with st.expander("Add new customer", expanded=False):
-        c_name = st.text_input("Customer name")
-        c_company = st.text_input("Company")
-        c_address = st.text_input("Address")
-        c_phone = st.text_input("Phone")
-        c_email = st.text_input("Email")
-        c_notes = st.text_area("Notes")
+    customers = load_customers_for(owner)
 
-        if st.button("Add customer"):
-            if not c_name.strip():
-                st.error("Customer name required.")
-            else:
-                new = {
-                    "id": f"C{int(pd.Timestamp.now().timestamp())}",
-                    "name": c_name.strip(),
-                    "company": c_company.strip(),
-                    "address": c_address.strip(),
-                    "phone": c_phone.strip(),
-                    "email": c_email.strip(),
-                    "notes": c_notes.strip(),
-                    "created_at": pd.Timestamp.now().isoformat()
-                }
-                target = owner if owner else username
-                lst = load_customers_for(target)
-                lst.append(new)
-                save_customers_for(target, lst)
-                st.success(f"Added customer for user {target}")
-                st.experimental_rerun()
+    with st.expander("Add new customer", expanded=False):
+        with st.form("add_customer_form"):
+            c_name = st.text_input("Customer name")
+            c_company = st.text_input("Company")
+            c_address = st.text_input("Address")
+            c_phone = st.text_input("Phone")
+            c_email = st.text_input("Email")
+            c_notes = st.text_area("Notes")
+            submitted = st.form_submit_button("Add customer")
+            if submitted:
+                if not c_name.strip():
+                    st.error("Customer name is required.")
+                else:
+                    new = {
+                        "id": f"C{int(datetime.now().timestamp())}",
+                        "name": c_name.strip(),
+                        "company": c_company.strip(),
+                        "address": c_address.strip(),
+                        "phone": c_phone.strip(),
+                        "email": c_email.strip(),
+                        "notes": c_notes.strip(),
+                        "created_at": datetime.now().isoformat(),
+                    }
+                    customers.append(new)
+                    save_customers_for(owner, customers)
+                    st.success("Customer added.")
+                    st.experimental_rerun()
 
     if not customers:
-        st.info("No customers.")
+        st.info("No customers yet.")
         return
 
     df = pd.DataFrame(customers)
-    cols_order = ["id", "name", "company", "phone", "email", "address", "notes", "created_at"]
-    cols = [c for c in cols_order if c in df.columns] + [c for c in df.columns if c not in cols_order]
+    cols_order = [
+        "id",
+        "name",
+        "company",
+        "phone",
+        "email",
+        "address",
+        "notes",
+        "created_at",
+    ]
+    cols = [c for c in cols_order if c in df.columns] + [
+        c for c in df.columns if c not in cols_order
+    ]
     df = df[cols]
-
     st.markdown("### Customer list")
     st.dataframe(df.reset_index(drop=True), use_container_width=True)
 
-    st.markdown("### Manage customer")
+    st.markdown("### Edit or delete customer")
     ids = df["id"].astype(str).tolist()
     sel_id = st.selectbox("Select customer ID", [""] + ids)
     if not sel_id:
         return
 
-    row = df[df["id"].astype(str) == sel_id].iloc[0].to_dict()
-    st.write(row)
+    selected = df[df["id"].astype(str) == sel_id].iloc[0].to_dict()
 
-    col1, col2 = st.columns(2)
-    if col1.button("Edit customer"):
-        with st.form(f"edit_customer_{sel_id}"):
-            e_name = st.text_input("Customer name", value=row.get("name", ""))
-            e_company = st.text_input("Company", value=row.get("company", ""))
-            e_address = st.text_input("Address", value=row.get("address", ""))
-            e_phone = st.text_input("Phone", value=row.get("phone", ""))
-            e_email = st.text_input("Email", value=row.get("email", ""))
-            e_notes = st.text_area("Notes", value=row.get("notes", ""))
-            submitted = st.form_submit_button("Save changes")
+    col_edit, col_delete = st.columns([3, 1])
+
+    with col_edit:
+        with st.form(f"edit_customer_form_{sel_id}"):
+            e_name = st.text_input("Customer name", value=selected.get("name", ""))
+            e_company = st.text_input("Company", value=selected.get("company", ""))
+            e_address = st.text_input("Address", value=selected.get("address", ""))
+            e_phone = st.text_input("Phone", value=selected.get("phone", ""))
+            e_email = st.text_input("Email", value=selected.get("email", ""))
+            e_notes = st.text_area("Notes", value=selected.get("notes", ""))
+            submitted = st.form_submit_button("Save customer")
             if submitted:
-                target = owner if owner else username
-                lst = load_customers_for(target)
-                for i, c in enumerate(lst):
+                for i, c in enumerate(customers):
                     if str(c.get("id")) == sel_id:
-                        lst[i].update({
-                            "name": e_name.strip(),
-                            "company": e_company.strip(),
-                            "address": e_address.strip(),
-                            "phone": e_phone.strip(),
-                            "email": e_email.strip(),
-                            "notes": e_notes.strip(),
-                            "updated_at": pd.Timestamp.now().isoformat()
-                        })
+                        customers[i].update(
+                            {
+                                "name": e_name.strip(),
+                                "company": e_company.strip(),
+                                "address": e_address.strip(),
+                                "phone": e_phone.strip(),
+                                "email": e_email.strip(),
+                                "notes": e_notes.strip(),
+                                "updated_at": datetime.now().isoformat(),
+                            }
+                        )
                         break
-                save_customers_for(target, lst)
+                save_customers_for(owner, customers)
                 st.success("Customer updated.")
                 st.experimental_rerun()
 
-    if col2.button("Delete customer"):
-        target = owner if owner else username
-        lst = load_customers_for(target)
-        new_lst = [c for c in lst if str(c.get("id")) != sel_id]
-        save_customers_for(target, new_lst)
-        st.success("Customer deleted.")
-        st.experimental_rerun()
+    with col_delete:
+        if st.button("Delete customer"):
+            new_list = [c for c in customers if str(c.get("id")) != sel_id]
+            save_customers_for(owner, new_list)
+            st.success("Customer deleted.")
+            st.experimental_rerun()
 
 # ------------------------------
-# Forms & Instructions page
+# Forms & Instructions
 # ------------------------------
 def page_forms_and_instructions():
     st.subheader("📂 Forms and Instructions")
-    st.write("Shared templates and forms. Admin can upload; all users can download.")
+    st.write("Shared templates and instructions.")
 
     form_files = sorted(os.listdir(FORM_FOLDER))
 
@@ -539,7 +678,6 @@ def page_forms_and_instructions():
             "Admin: Upload forms (xlsx/xls)",
             type=["xlsx", "xls"],
             accept_multiple_files=True,
-            key="forms_upload"
         )
         if uploads:
             for f in uploads:
@@ -549,7 +687,8 @@ def page_forms_and_instructions():
                         out_f.write(f.read())
                 except Exception as e:
                     st.error(f"Error saving {f.name}: {e}")
-            st.success("Forms uploaded.")
+            st.success("Form(s) uploaded.")
+            st.experimental_rerun()
 
         if form_files:
             to_del = st.selectbox("Select form to delete", [""] + form_files)
@@ -567,14 +706,19 @@ def page_forms_and_instructions():
                 try:
                     with open(path, "rb") as fh:
                         data = fh.read()
-                    st.download_button(f"Download {f}", data, file_name=f, key=f"down_form_{f}")
+                    st.download_button(
+                        f"Download {f}",
+                        data,
+                        file_name=f,
+                        key=f"down_form_{f}",
+                    )
                 except Exception:
                     continue
         else:
             st.info("No forms available.")
 
 # ------------------------------
-# Quotations page (history)
+# Quotations page
 # ------------------------------
 def page_quotations():
     st.subheader("📄 Quotations")
@@ -582,7 +726,7 @@ def page_quotations():
     os.makedirs(q_folder, exist_ok=True)
     files = sorted(os.listdir(q_folder))
     if not files:
-        st.info("No quotations yet.")
+        st.info("No quotations saved.")
         return
 
     for f in files:
@@ -593,141 +737,35 @@ def page_quotations():
         with c2:
             with open(path, "rb") as fh:
                 data = fh.read()
-            st.download_button("Download", data, file_name=f, key=f"down_q_{f}")
+            st.download_button(
+                "Download", data, file_name=f, key=f"down_q_{f}"
+            )
         with c3:
             if st.button("Delete", key=f"del_q_{f}"):
                 os.remove(path)
-                st.success("Deleted.")
+                st.success("Quotation deleted.")
                 st.experimental_rerun()
-
-# ------------------------------
-# Quotation template filling
-# ------------------------------
-def make_quotation_filename():
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return f"Quotation_{ts}.xlsx"
-
-def fill_quotation_template(result_df, company_info, customer_info, terms):
-    """
-    Uses quotation_template.xlsx, fills Sheet1 + Sheet2, returns (BytesIO, filename, preview_info).
-    - Sheet1: Quotation header + trading terms + grand total to G12
-    - Sheet2: matched items starting at A2
-    """
-
-    if not os.path.exists(TEMPLATE_FILE):
-        raise FileNotFoundError(
-            f"Quotation template '{TEMPLATE_FILE}' not found. "
-            "Please upload it to the same folder as this app."
-        )
-
-    wb = load_workbook(TEMPLATE_FILE)
-    sheet_names = wb.sheetnames
-    if len(sheet_names) < 2:
-        raise ValueError("quotation_template.xlsx must have at least two sheets (Quotation, Matched items).")
-
-    ws_quote = wb[sheet_names[0]]
-    ws_items = wb[sheet_names[1]]
-
-    # company
-    ws_quote["B2"] = company_info.get("name", "")
-    ws_quote["B3"] = company_info.get("address", "")
-    ws_quote["B4"] = company_info.get("phone", "")
-    ws_quote["B5"] = company_info.get("email", "")
-
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    ws_quote["B6"] = today_str
-    q_no = datetime.now().strftime("Q%Y%m%d-%H%M%S")
-    ws_quote["B7"] = q_no
-
-    # customer
-    ws_quote["E3"] = customer_info.get("company", "")
-    ws_quote["E4"] = customer_info.get("name", "")
-    ws_quote["E5"] = customer_info.get("phone", "")
-    ws_quote["E6"] = customer_info.get("email", "")
-    ws_quote["E7"] = customer_info.get("address", "")
-
-    # trading terms
-    ws_quote["C21"] = terms.get("payment", "")
-    ws_quote["C22"] = terms.get("delivery", "")
-    ws_quote["C23"] = terms.get("transportation_fee", "")
-    ws_quote["C24"] = terms.get("validity", "")
-
-    # matched items (Sheet2)
-    # result_df includes last grand total row; we exclude that for sheet2
-    if len(result_df) > 1:
-        items_df = result_df.iloc[:-1].copy()
-    else:
-        items_df = result_df.copy()
-
-    cols_expected = [
-        "Model",
-        "Description (requested)",
-        "Description (proposed)",
-        "Specification",
-        "Unit",
-        "Quantity",
-        "Material Cost",
-        "Labour Cost",
-        "Amount Material",
-        "Amount Labour",
-        "Total"
-    ]
-    missing_cols = [c for c in cols_expected if c not in items_df.columns]
-    if missing_cols:
-        raise ValueError(f"Missing expected columns in match result: {missing_cols}")
-
-    # Clear old content in items sheet (optional)
-    max_rows = ws_items.max_row
-    max_cols = ws_items.max_column
-    for r in range(2, max_rows + 1):
-        for c in range(1, max_cols + 1):
-            ws_items.cell(row=r, column=c).value = None
-
-    start_row = 2
-    for idx, row in items_df.iterrows():
-        r = start_row + (len(items_df.loc[:idx]) - 1)
-        ws_items.cell(row=r, column=1, value=row["Model"])
-        ws_items.cell(row=r, column=2, value=row["Description (requested)"])
-        ws_items.cell(row=r, column=3, value=row["Description (proposed)"])
-        ws_items.cell(row=r, column=4, value=row["Specification"])
-        ws_items.cell(row=r, column=5, value=row["Unit"])
-        ws_items.cell(row=r, column=6, value=float(row["Quantity"]) if pd.notna(row["Quantity"]) else 0)
-        ws_items.cell(row=r, column=7, value=float(row["Material Cost"]) if pd.notna(row["Material Cost"]) else 0)
-        ws_items.cell(row=r, column=8, value=float(row["Labour Cost"]) if pd.notna(row["Labour Cost"]) else 0)
-        ws_items.cell(row=r, column=9, value=float(row["Amount Material"]) if pd.notna(row["Amount Material"]) else 0)
-        ws_items.cell(row=r, column=10, value=float(row["Amount Labour"]) if pd.notna(row["Amount Labour"]) else 0)
-        ws_items.cell(row=r, column=11, value=float(row["Total"]) if pd.notna(row["Total"]) else 0)
-
-    # grand total from items_df Total column
-    grand_total = pd.to_numeric(items_df["Total"], errors="coerce").fillna(0).sum()
-    ws_quote["G12"] = grand_total
-
-    buffer = BytesIO()
-    wb.save(buffer)
-    buffer.seek(0)
-
-    preview_header = {
-        "company": company_info,
-        "customer": customer_info,
-        "terms": terms,
-        "date": today_str,
-        "quotation_number": q_no,
-        "grand_total": grand_total
-    }
-
-    filename = make_quotation_filename()
-    return buffer, filename, preview_header, items_df
 
 # ------------------------------
 # Estimation page
 # ------------------------------
 def page_estimation():
+    # session state for matching & quotation
+    if "last_match_df" not in st.session_state:
+        st.session_state["last_match_df"] = None
+    if "last_unmatched_df" not in st.session_state:
+        st.session_state["last_unmatched_df"] = None
+    if "quotation_bytes" not in st.session_state:
+        st.session_state["quotation_bytes"] = None
+    if "quotation_filename" not in st.session_state:
+        st.session_state["quotation_filename"] = None
+
     st.subheader("1. Upload price list files")
     uploads = st.file_uploader(
         "Upload one or more price list Excel files (.xlsx)",
         type=["xlsx"],
         accept_multiple_files=True,
-        key="pl_up_main"
+        key="pl_up_main",
     )
     if uploads:
         for f in uploads:
@@ -736,7 +774,8 @@ def page_estimation():
                     out_f.write(f.read())
             except Exception as e:
                 st.error(f"Error saving {f.name}: {e}")
-        st.success("Price lists uploaded.")
+        st.success("Price list(s) uploaded.")
+        st.experimental_rerun()
 
     st.subheader("2. Manage price lists")
     price_list_files = list_price_list_files(user_folder)
@@ -745,12 +784,12 @@ def page_estimation():
         for f in price_list_files:
             st.write(f"- {f}")
     else:
-        st.info("No price lists uploaded.")
+        st.info("No price lists uploaded yet.")
 
     selected_file = st.radio(
-        "Choose one price list or use all",
+        "Choose one price list to use or all",
         ["All files"] + price_list_files,
-        index=0
+        index=0,
     )
 
     if price_list_files:
@@ -759,7 +798,7 @@ def page_estimation():
             to_del = st.selectbox(
                 "Select a price list to delete",
                 [""] + price_list_files,
-                key="del_pl_main"
+                key="del_pl_main",
             )
         with col_b:
             if st.button("Delete selected price list"):
@@ -777,11 +816,9 @@ def page_estimation():
     estimation_file = st.file_uploader(
         "Upload estimation request (.xlsx)",
         type=["xlsx"],
-        key="estimation_file_main"
+        key="estimation_file_main",
     )
-    run_matching = st.button("Match now")
 
-    # match settings
     match_threshold = st.session_state.get("match_threshold", 70)
     w_size = st.session_state.get("weight_size", 0.45)
     w_cores = st.session_state.get("weight_cores", 0.25)
@@ -792,8 +829,12 @@ def page_estimation():
     weights = {
         "size": w_size / total_w,
         "cores": w_cores / total_w,
-        "material": w_material / total_w
+        "material": w_material / total_w,
     }
+
+    col_match_btn, _ = st.columns([1, 3])
+    with col_match_btn:
+        run_matching = st.button("Match now")
 
     if run_matching:
         if estimation_file is None:
@@ -801,6 +842,7 @@ def page_estimation():
         elif not price_list_files:
             st.error("Please upload at least one price list first.")
         else:
+            # read estimation
             try:
                 est = pd.read_excel(estimation_file).dropna(how="all")
             except Exception as e:
@@ -810,33 +852,47 @@ def page_estimation():
             if est is not None:
                 est_cols = est.columns.tolist()
                 if len(est_cols) < 5:
-                    st.error("Estimation file must have at least 5 columns (Model, Description, Spec, Unit, Quantity).")
+                    st.error(
+                        "Estimation file must have at least 5 columns (Model, Description, Spec, Unit, Quantity)."
+                    )
                 else:
                     base_est = (
-                        est[est_cols[0]].fillna("") + " "
-                        + est[est_cols[1]].fillna("") + " "
+                        est[est_cols[0]].fillna("")
+                        + " "
+                        + est[est_cols[1]].fillna("")
+                        + " "
                         + est[est_cols[2]].fillna("")
                     )
                     est["combined"] = base_est.apply(clean)
                     parsed_est = base_est.apply(parse_cable_spec)
                     est["main_key"] = parsed_est.apply(lambda d: d["main_key"])
                     est["aux_key"] = parsed_est.apply(lambda d: d["aux_key"])
-                    est["materials"] = base_est.apply(extract_material_structure_tokens)
+                    est["materials"] = base_est.apply(
+                        extract_material_structure_tokens
+                    )
 
                     # read DB(s)
                     if selected_file == "All files":
                         frames = []
                         for f in price_list_files:
                             try:
-                                df_pl = pd.read_excel(os.path.join(user_folder, f)).dropna(how="all")
+                                df_pl = pd.read_excel(
+                                    os.path.join(user_folder, f)
+                                ).dropna(how="all")
                                 df_pl["source"] = f
                                 frames.append(df_pl)
                             except Exception:
                                 continue
-                        db = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+                        db = (
+                            pd.concat(frames, ignore_index=True)
+                            if frames
+                            else pd.DataFrame()
+                        )
                     else:
                         try:
-                            db = pd.read_excel(os.path.join(user_folder, selected_file)).dropna(how="all")
+                            db = pd.read_excel(
+                                os.path.join(user_folder, selected_file)
+                            ).dropna(how="all")
                             db["source"] = selected_file
                         except Exception as e:
                             st.error(f"Cannot read price list: {e}")
@@ -847,18 +903,28 @@ def page_estimation():
                     else:
                         db_cols = db.columns.tolist()
                         if len(db_cols) < 6:
-                            st.error("Price list requires at least 6 columns (Model, Description, Spec, ..., MaterialCost, LabourCost).")
+                            st.error(
+                                "Price list requires at least 6 columns (Model, Description, Spec, ..., MaterialCost, LabourCost)."
+                            )
                         else:
                             base_db = (
-                                db[db_cols[0]].fillna("") + " "
-                                + db[db_cols[1]].fillna("") + " "
+                                db[db_cols[0]].fillna("")
+                                + " "
+                                + db[db_cols[1]].fillna("")
+                                + " "
                                 + db[db_cols[2]].fillna("")
                             )
                             db["combined"] = base_db.apply(clean)
                             parsed_db = base_db.apply(parse_cable_spec)
-                            db["main_key"] = parsed_db.apply(lambda d: d["main_key"])
-                            db["aux_key"] = parsed_db.apply(lambda d: d["aux_key"])
-                            db["materials"] = base_db.apply(extract_material_structure_tokens)
+                            db["main_key"] = parsed_db.apply(
+                                lambda d: d["main_key"]
+                            )
+                            db["aux_key"] = parsed_db.apply(
+                                lambda d: d["aux_key"]
+                            )
+                            db["materials"] = base_db.apply(
+                                extract_material_structure_tokens
+                            )
 
                             results = []
                             for _, row in est.iterrows():
@@ -882,10 +948,16 @@ def page_estimation():
                                         r_aux = r.get("aux_key", "")
                                         r_mats = r.get("materials", [])
                                         return combined_match_score(
-                                            query, q_main, q_aux, q_mats,
+                                            query,
+                                            q_main,
+                                            q_aux,
+                                            q_mats,
                                             r.get("combined", ""),
-                                            r_main, r_aux, r_mats,
-                                            match_threshold, weights
+                                            r_main,
+                                            r_aux,
+                                            r_mats,
+                                            match_threshold,
+                                            weights,
                                         )
                                     except Exception:
                                         return 0.0
@@ -893,33 +965,67 @@ def page_estimation():
                                 if not c0.empty:
                                     c0 = c0.copy()
                                     c0["score"] = c0.apply(score_row, axis=1)
-                                    top = c0.sort_values("score", ascending=False).head(1)
-                                    if not top.empty and float(top.iloc[0]["score"]) >= match_threshold:
-                                        best = top.iloc[0]
+                                    top = (
+                                        c0.sort_values(
+                                            "score", ascending=False
+                                        )
+                                        .head(1)
+                                        .reset_index(drop=True)
+                                    )
+                                    if (
+                                        not top.empty
+                                        and float(top.loc[0, "score"])
+                                        >= match_threshold
+                                    ):
+                                        best = top.loc[0]
                                         best_score = float(best["score"])
 
                                 if best is None:
                                     c1 = db.copy()
                                     c1["score"] = c1.apply(score_row, axis=1)
-                                    top2 = c1.sort_values("score", ascending=False).head(1)
-                                    if not top2.empty and float(top2.iloc[0]["score"]) >= match_threshold:
-                                        best = top2.iloc[0]
+                                    top2 = (
+                                        c1.sort_values(
+                                            "score", ascending=False
+                                        )
+                                        .head(1)
+                                        .reset_index(drop=True)
+                                    )
+                                    if (
+                                        not top2.empty
+                                        and float(top2.loc[0, "score"])
+                                        >= match_threshold
+                                    ):
+                                        best = top2.loc[0]
                                         best_score = float(best["score"])
 
                                 if best is None:
                                     c2 = db.copy()
-                                    c2["score"] = c2["combined"].apply(lambda x: fuzz.token_set_ratio(query, x))
-                                    top3 = c2.sort_values("score", ascending=False).head(1)
+                                    c2["score"] = c2["combined"].apply(
+                                        lambda x: fuzz.token_set_ratio(
+                                            query, x
+                                        )
+                                    )
+                                    top3 = (
+                                        c2.sort_values(
+                                            "score", ascending=False
+                                        )
+                                        .head(1)
+                                        .reset_index(drop=True)
+                                    )
                                     if not top3.empty:
-                                        best = top3.iloc[0]
+                                        best = top3.loc[0]
                                         best_score = float(best["score"])
 
                                 if best is not None and best_score >= 0:
                                     matched_desc = best[db_cols[1]]
                                     matched_model = best[db_cols[0]]
                                     matched_spec = best[db_cols[2]]
-                                    m_cost = pd.to_numeric(best[db_cols[4]], errors="coerce")
-                                    l_cost = pd.to_numeric(best[db_cols[5]], errors="coerce")
+                                    m_cost = pd.to_numeric(
+                                        best[db_cols[4]], errors="coerce"
+                                    )
+                                    l_cost = pd.to_numeric(
+                                        best[db_cols[5]], errors="coerce"
+                                    )
                                     if pd.isna(m_cost):
                                         m_cost = 0
                                     if pd.isna(l_cost):
@@ -931,26 +1037,30 @@ def page_estimation():
                                     m_cost = 0
                                     l_cost = 0
 
-                                qty_num = pd.to_numeric(qty_value, errors="coerce")
+                                qty_num = pd.to_numeric(
+                                    qty_value, errors="coerce"
+                                )
                                 if pd.isna(qty_num):
                                     qty_num = 0
                                 amt_mat = qty_num * m_cost
                                 amt_lab = qty_num * l_cost
-                                total = amt_mat + amt_lab
+                                total_val = amt_mat + amt_lab
 
-                                results.append([
-                                    matched_model,
-                                    row[est_cols[1]],
-                                    matched_desc,
-                                    matched_spec,
-                                    unit,
-                                    qty_num,
-                                    m_cost,
-                                    l_cost,
-                                    amt_mat,
-                                    amt_lab,
-                                    total
-                                ])
+                                results.append(
+                                    [
+                                        matched_model,
+                                        row[est_cols[1]],
+                                        matched_desc,
+                                        matched_spec,
+                                        unit,
+                                        qty_num,
+                                        m_cost,
+                                        l_cost,
+                                        amt_mat,
+                                        amt_lab,
+                                        total_val,
+                                    ]
+                                )
 
                             result_df = pd.DataFrame(
                                 results,
@@ -965,248 +1075,330 @@ def page_estimation():
                                     "Labour Cost",
                                     "Amount Material",
                                     "Amount Labour",
-                                    "Total"
-                                ]
+                                    "Total",
+                                ],
                             )
-                            grand_total = pd.to_numeric(result_df["Total"], errors="coerce").sum()
-                            result_df.loc[len(result_df.index)] = [""] * 10 + [grand_total]
+                            grand_total = pd.to_numeric(
+                                result_df["Total"], errors="coerce"
+                            ).sum()
+                            result_df.loc[len(result_df.index)] = (
+                                [""] * 10 + [grand_total]
+                            )
 
-                            st.session_state["match_result_df"] = result_df
+                            unmatched_df = result_df[
+                                result_df["Description (proposed)"] == ""
+                            ]
 
-    # Show matching result if available
-    if "match_result_df" in st.session_state:
-        result_df = st.session_state["match_result_df"]
-        st.markdown("### Result matching table")
-        display_df = result_df.copy()
-        display_df["Quantity"] = pd.to_numeric(display_df["Quantity"], errors="coerce").fillna(0).astype(int)
-        for col in ["Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"]:
-            display_df[col] = pd.to_numeric(display_df[col], errors="coerce").fillna(0).map("{:,.0f}".format)
+                            st.session_state["last_match_df"] = result_df
+                            st.session_state["last_unmatched_df"] = unmatched_df
+                            st.success("Matching completed.")
+
+    # show last matching results (persistent while editing)
+    last_df = st.session_state.get("last_match_df")
+    last_unmatched = st.session_state.get("last_unmatched_df")
+
+    if last_df is not None:
+        st.markdown("#### Matched Estimation (latest)")
+        display_df = last_df.copy()
+        display_df["Quantity"] = pd.to_numeric(
+            display_df["Quantity"], errors="coerce"
+        ).fillna(0).astype(int)
+        for col in [
+            "Material Cost",
+            "Labour Cost",
+            "Amount Material",
+            "Amount Labour",
+            "Total",
+        ]:
+            display_df[col] = pd.to_numeric(
+                display_df[col], errors="coerce"
+            ).fillna(0).map("{:,.0f}".format)
         st.dataframe(display_df, use_container_width=True)
 
-        unmatched_df = result_df[result_df["Description (proposed)"] == ""]
-        st.subheader("Unmatched rows")
-        if unmatched_df.empty:
-            st.info("All rows matched.")
-        else:
-            st.dataframe(unmatched_df, use_container_width=True)
-
+        # download matching file (.xlsx)
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-            result_df.to_excel(writer, index=False, sheet_name="Matched Results")
-            if not unmatched_df.empty:
-                unmatched_df.to_excel(writer, index=False, sheet_name="Unmatched Items")
-        buffer.seek(0)
+            last_df.to_excel(
+                writer, index=False, sheet_name="Matched Results"
+            )
+            if last_unmatched is not None and not last_unmatched.empty:
+                last_unmatched.to_excel(
+                    writer,
+                    index=False,
+                    sheet_name="Unmatched Items",
+                )
         st.download_button(
             "Download matching file (.xlsx)",
             buffer.getvalue(),
-            file_name="Estimation_Result_BuildWise.xlsx"
+            file_name="Estimation_Result_BuildWise.xlsx",
         )
     else:
-        st.info("Run matching to see results.")
+        st.info("No matching result yet. Upload files and click 'Match now'.")
 
-    # ------------------------------
-    # 4. Quotation generation
-    # ------------------------------
     st.markdown("---")
     st.subheader("4. Quotation generation")
 
+    # customers
     customers = load_customers_for(username)
     cust_labels = ["--No customer--"] + [
         f"{c.get('name', '')} ({c.get('company', '')})" for c in customers
     ]
-    col_c1, col_c2 = st.columns([3, 1])
+    col_c1, col_c2 = st.columns([2, 2])
     with col_c1:
-        selected_cust_label = st.selectbox("Select a customer", cust_labels, index=0)
-    with col_c2:
-        edit_clicked = st.button("Edit selected customer")
+        selected_cust_label = st.selectbox(
+            "Select a customer", cust_labels, index=0
+        )
 
-    selected_customer = None
+    active_customer = None
     if selected_cust_label != "--No customer--":
         idx = cust_labels.index(selected_cust_label) - 1
-        selected_customer = customers[idx]
-
-    if selected_customer is not None:
-        st.markdown("*Customer selected:*")
-        st.table(pd.DataFrame([selected_customer]))
+        active_customer = customers[idx]
+        st.markdown("*Selected customer:*")
+        # display as table
+        cust_df = pd.DataFrame(
+            {
+                "Field": [
+                    "Name",
+                    "Company",
+                    "Address",
+                    "Phone",
+                    "Email",
+                    "Notes",
+                ],
+                "Value": [
+                    active_customer.get("name", ""),
+                    active_customer.get("company", ""),
+                    active_customer.get("address", ""),
+                    active_customer.get("phone", ""),
+                    active_customer.get("email", ""),
+                    active_customer.get("notes", ""),
+                ],
+            }
+        )
+        st.table(cust_df)
     else:
-        st.info("No customer selected.")
+        st.info("No customer selected yet.")
 
-    if edit_clicked and selected_customer is not None:
-        with st.form("edit_selected_customer_form_main"):
-            e_name = st.text_input("Customer name", value=selected_customer.get("name", ""))
-            e_company = st.text_input("Company", value=selected_customer.get("company", ""))
-            e_address = st.text_input("Address", value=selected_customer.get("address", ""))
-            e_phone = st.text_input("Phone", value=selected_customer.get("phone", ""))
-            e_email = st.text_input("Email", value=selected_customer.get("email", ""))
-            e_notes = st.text_area("Notes", value=selected_customer.get("notes", ""))
-            submitted = st.form_submit_button("Save customer")
-            if submitted:
-                customers[idx].update({
-                    "name": e_name.strip(),
-                    "company": e_company.strip(),
-                    "address": e_address.strip(),
-                    "phone": e_phone.strip(),
-                    "email": e_email.strip(),
-                    "notes": e_notes.strip(),
-                    "updated_at": datetime.now().isoformat()
-                })
-                save_customers_for(username, customers)
-                st.success("Customer updated.")
-                st.experimental_rerun()
+    # Edit/save selected customer (fixed)
+    if active_customer is not None:
+        with st.expander("Edit selected customer"):
+            with st.form("edit_selected_customer_main"):
+                e_name = st.text_input(
+                    "Customer name", value=active_customer.get("name", "")
+                )
+                e_company = st.text_input(
+                    "Company", value=active_customer.get("company", "")
+                )
+                e_address = st.text_input(
+                    "Address", value=active_customer.get("address", "")
+                )
+                e_phone = st.text_input(
+                    "Phone", value=active_customer.get("phone", "")
+                )
+                e_email = st.text_input(
+                    "Email", value=active_customer.get("email", "")
+                )
+                e_notes = st.text_area(
+                    "Notes", value=active_customer.get("notes", "")
+                )
+                submitted = st.form_submit_button("Save customer")
+                if submitted:
+                    cust_id = active_customer.get("id")
+                    for i, c in enumerate(customers):
+                        if c.get("id") == cust_id:
+                            customers[i].update(
+                                {
+                                    "name": e_name.strip(),
+                                    "company": e_company.strip(),
+                                    "address": e_address.strip(),
+                                    "phone": e_phone.strip(),
+                                    "email": e_email.strip(),
+                                    "notes": e_notes.strip(),
+                                    "updated_at": datetime.now().isoformat(),
+                                }
+                            )
+                            break
+                    save_customers_for(username, customers)
+                    st.success("Customer updated.")
+                    st.experimental_rerun()
 
-    st.markdown("### Trading terms / Điều khoản thương mại")
-    current_terms = load_trading_terms(username)
+    # Trading terms
+    st.markdown("#### Trading terms / Điều khoản thương mại")
+    terms = load_trading_terms(username)
     with st.form("trading_terms_form_main"):
-        payment = st.text_area("Payment / Thanh toán", value=current_terms.get("payment", ""), height=80)
-        delivery = st.text_input("Delivery schedule / Tiến độ", value=current_terms.get("delivery", ""))
-        trans_fee = st.text_input("Transportation fee / Phí vận chuyển", value=current_terms.get("transportation_fee", ""))
-        validity = st.text_input("Quotation validity / Hiệu lực báo giá", value=current_terms.get("validity", ""))
-        save_terms = st.form_submit_button("Save trading terms")
-        if save_terms:
+        payment = st.text_area(
+            "Payment / Thanh toán",
+            value=terms.get("payment", ""),
+            height=80,
+        )
+        delivery = st.text_input(
+            "Delivery schedule / Tiến độ",
+            value=terms.get("delivery", ""),
+        )
+        trans_fee = st.text_input(
+            "Transportation fee / Phí vận chuyển",
+            value=terms.get("transportation_fee", ""),
+        )
+        validity = st.text_input(
+            "Quotation validity / Hiệu lực báo giá",
+            value=terms.get("validity", ""),
+        )
+        save_terms_btn = st.form_submit_button("Save trading terms")
+        if save_terms_btn:
             new_terms = {
                 "payment": payment,
                 "delivery": delivery,
                 "transportation_fee": trans_fee,
-                "validity": validity
+                "validity": validity,
             }
             save_trading_terms(username, new_terms)
             st.success("Trading terms saved.")
+            terms = new_terms
 
-    # Generate quotation
-    col_q1, col_q2, col_q3 = st.columns(3)
-    generate_clicked = col_q1.button("Generate quotation")
-    download_clicked = col_q2.button("Download quotation (.xlsx)")
-    save_clicked = col_q3.button("Save quotation")
+    col_g1, col_g2 = st.columns([1, 3])
+    with col_g1:
+        generate_q = st.button("Generate quotation")
 
-    company_info = load_company_profile(username)
-    terms_for_quote = {
-        "payment": payment if "payment" in locals() else current_terms.get("payment", ""),
-        "delivery": delivery if "delivery" in locals() else current_terms.get("delivery", ""),
-        "transportation_fee": trans_fee if "trans_fee" in locals() else current_terms.get("transportation_fee", ""),
-        "validity": validity if "validity" in locals() else current_terms.get("validity", "")
-    }
-
-    if generate_clicked:
-        if "match_result_df" not in st.session_state:
+    if generate_q:
+        if active_customer is None:
+            st.error("Please select a customer before generating quotation.")
+        elif st.session_state.get("last_match_df") is None:
             st.error("Please run matching first.")
-        elif selected_customer is None:
-            st.error("Please select a customer.")
         elif not os.path.exists(TEMPLATE_FILE):
             st.error(
-                f"Quotation template '{TEMPLATE_FILE}' not found. "
-                "Please upload it to the same folder as this app."
+                f"Quotation template '{TEMPLATE_FILE}' not found. Please upload it to the same folder as this app."
             )
         else:
-            result_df = st.session_state["match_result_df"]
+            # load company info
+            comp_file = os.path.join(user_folder, "company.json")
+            company_info = {}
+            if os.path.exists(comp_file):
+                try:
+                    with open(comp_file, "r", encoding="utf-8") as f:
+                        company_info = json.load(f)
+                except Exception:
+                    company_info = {}
+
+            result_df = st.session_state["last_match_df"].copy()
+            current_terms = {
+                "payment": payment,
+                "delivery": delivery,
+                "transportation_fee": trans_fee,
+                "validity": validity,
+            }
+            save_trading_terms(username, current_terms)
+
             try:
-                buffer, filename, preview_header, items_df = fill_quotation_template(
+                q_bytes = generate_quotation_from_template(
+                    TEMPLATE_FILE,
                     result_df,
                     company_info,
-                    selected_customer,
-                    terms_for_quote
+                    active_customer,
+                    current_terms,
                 )
+                q_filename = make_quotation_filename()
+                st.session_state["quotation_bytes"] = q_bytes
+                st.session_state["quotation_filename"] = q_filename
+                st.success("Quotation generated using template.")
+            except FileNotFoundError as e:
+                st.error(str(e))
             except Exception as e:
-                st.error(f"Error generating quotation from template: {e}")
-            else:
-                st.session_state["quotation_buffer"] = buffer
-                st.session_state["quotation_filename"] = filename
-                st.session_state["quotation_preview_header"] = preview_header
-                st.session_state["quotation_items_df"] = items_df
-                st.success("Quotation generated (not saved yet). See preview below.")
+                st.error(f"Error generating quotation: {e}")
 
-    # Download quotation (if generated)
-    if download_clicked:
-        buf = st.session_state.get("quotation_buffer")
-        fname = st.session_state.get("quotation_filename", make_quotation_filename())
-        if buf is None:
-            st.error("No quotation generated yet. Click 'Generate quotation' first.")
-        else:
+    # Quotation preview + Download + Save
+    if st.session_state.get("quotation_bytes") is not None:
+        st.markdown("#### Quotation preview (matched items)")
+        # preview from last_match_df
+        prev_df = st.session_state["last_match_df"].copy()
+        display_prev = prev_df.copy()
+        display_prev["Quantity"] = pd.to_numeric(
+            display_prev["Quantity"], errors="coerce"
+        ).fillna(0).astype(int)
+        for col in [
+            "Material Cost",
+            "Labour Cost",
+            "Amount Material",
+            "Amount Labour",
+            "Total",
+        ]:
+            display_prev[col] = pd.to_numeric(
+                display_prev[col], errors="coerce"
+            ).fillna(0).map("{:,.0f}".format)
+        st.dataframe(display_prev, use_container_width=True)
+
+        col_d1, col_d2 = st.columns([1, 1])
+        with col_d1:
             st.download_button(
-                "Download generated quotation (.xlsx)",
-                buf.getvalue(),
-                file_name=fname,
-                key="download_quotation_generated"
+                "Download quotation (.xlsx)",
+                st.session_state["quotation_bytes"],
+                file_name=st.session_state["quotation_filename"],
             )
-
-    # Save quotation (write file to history)
-    if save_clicked:
-        buf = st.session_state.get("quotation_buffer")
-        fname = st.session_state.get("quotation_filename", make_quotation_filename())
-        if buf is None:
-            st.error("No quotation generated yet. Click 'Generate quotation' first.")
-        else:
-            q_folder = os.path.join(user_folder, "quotations")
-            os.makedirs(q_folder, exist_ok=True)
-            path = os.path.join(q_folder, fname)
-            with open(path, "wb") as f:
-                f.write(buf.getvalue())
-            st.success(f"Quotation saved as {fname} in quotation history.")
-
-    # Quotation preview
-    if "quotation_preview_header" in st.session_state and "quotation_items_df" in st.session_state:
-        st.markdown("### Quotation preview")
-
-        preview_header = st.session_state["quotation_preview_header"]
-        items_df = st.session_state["quotation_items_df"]
-
-        company_info_prev = preview_header["company"]
-        customer_info_prev = preview_header["customer"]
-        terms_prev = preview_header["terms"]
-        date_prev = preview_header["date"]
-        q_no_prev = preview_header["quotation_number"]
-        grand_total_prev = preview_header["grand_total"]
-
-        st.markdown("*Header information*")
-        header_rows = [
-            ("Company name", company_info_prev.get("name", "")),
-            ("Company address", company_info_prev.get("address", "")),
-            ("Company phone", company_info_prev.get("phone", "")),
-            ("Company email", company_info_prev.get("email", "")),
-            ("Date", date_prev),
-            ("Quotation number", q_no_prev),
-            ("Customer company", customer_info_prev.get("company", "")),
-            ("Customer name", customer_info_prev.get("name", "")),
-            ("Customer phone", customer_info_prev.get("phone", "")),
-            ("Customer email", customer_info_prev.get("email", "")),
-            ("Customer address", customer_info_prev.get("address", "")),
-            ("Payment", terms_prev.get("payment", "")),
-            ("Delivery", terms_prev.get("delivery", "")),
-            ("Transportation", terms_prev.get("transportation_fee", "")),
-            ("Validity", terms_prev.get("validity", "")),
-            ("Grand total", f"{grand_total_prev:,.0f}")
-        ]
-        header_df = pd.DataFrame(header_rows, columns=["Field", "Value"])
-        st.table(header_df)
-
-        st.markdown("*Matched items (Sheet2)*")
-        items_preview = items_df.copy()
-        items_preview["Quantity"] = pd.to_numeric(items_preview["Quantity"], errors="coerce").fillna(0).astype(int)
-        for col in ["Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"]:
-            items_preview[col] = pd.to_numeric(items_preview[col], errors="coerce").fillna(0).map("{:,.0f}".format)
-        st.dataframe(items_preview, use_container_width=True)
+        with col_d2:
+            if st.button("Save quotation"):
+                q_folder = os.path.join(user_folder, "quotations")
+                os.makedirs(q_folder, exist_ok=True)
+                path = os.path.join(
+                    q_folder, st.session_state["quotation_filename"]
+                )
+                with open(path, "wb") as f:
+                    f.write(st.session_state["quotation_bytes"])
+                st.success("Quotation saved to history.")
+    else:
+        st.info("Generate a quotation to enable preview, download, and save.")
 
 # ------------------------------
-# Sidebar navigation + match sliders
+# Sidebar navigation + match settings
 # ------------------------------
 st.sidebar.title("Navigation")
-nav_items = ["Estimation", "Customers", "Company Profile", "Quotation", "Forms and Instructions"]
+nav_items = [
+    "Estimation",
+    "Customers",
+    "Company Profile",
+    "Quotation",
+    "Forms and Instructions",
+]
 page = st.sidebar.radio("Go to", nav_items, index=0)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Matching settings")
-th = st.sidebar.slider("Match threshold", 0, 100, st.session_state.get("match_threshold", 70))
-w_s = st.sidebar.slider("Size weight", 0.0, 1.0, st.session_state.get("weight_size", 0.45), step=0.05)
-w_c = st.sidebar.slider("Cores weight", 0.0, 1.0, st.session_state.get("weight_cores", 0.25), step=0.05)
-w_m = st.sidebar.slider("Material weight", 0.0, 1.0, st.session_state.get("weight_material", 0.30), step=0.05)
+th = st.sidebar.slider(
+    "Match threshold", 0, 100, st.session_state.get("match_threshold", 70)
+)
+w_s = st.sidebar.slider(
+    "Size weight",
+    0.0,
+    1.0,
+    st.session_state.get("weight_size", 0.45),
+    step=0.05,
+)
+w_c = st.sidebar.slider(
+    "Cores weight",
+    0.0,
+    1.0,
+    st.session_state.get("weight_cores", 0.25),
+    step=0.05,
+)
+w_m = st.sidebar.slider(
+    "Material weight",
+    0.0,
+    1.0,
+    st.session_state.get("weight_material", 0.30),
+    step=0.05,
+)
 
 if st.sidebar.button("Save matching settings"):
-    settings = {"threshold": int(th), "size": float(w_s), "cores": float(w_c), "material": float(w_m)}
+    settings = {
+        "threshold": int(th),
+        "size": float(w_s),
+        "cores": float(w_c),
+        "material": float(w_m),
+    }
     save_weights_for(username, settings)
     st.session_state["match_threshold"] = settings["threshold"]
     st.session_state["weight_size"] = settings["size"]
     st.session_state["weight_cores"] = settings["cores"]
     st.session_state["weight_material"] = settings["material"]
-    st.sidebar.success("Settings saved.")
+    st.sidebar.success("Matching settings saved.")
 
 # ------------------------------
 # Routing
@@ -1223,4 +1415,4 @@ elif page == "Forms and Instructions":
     page_forms_and_instructions()
 
 st.markdown("---")
-st.caption("BuildWise — Estimation & Quotation tool")
+st.caption("BuildWise — Estimation & Quotation tool (Excel template version)")
