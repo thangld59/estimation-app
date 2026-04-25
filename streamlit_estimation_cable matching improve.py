@@ -59,7 +59,7 @@ AUX_RE = re.compile(
     flags=re.IGNORECASE,
 )
 MATERIAL_TOKEN_RE = re.compile(
-    r"(cu|aluminium|al|xlpe|pvc|pe|lszh|hdpe|dsta|fr|swa)",
+    r"(cu|aluminium|al|xlpe|pvc|pe|data|hdpe|dsta|fr|swa)",
     flags=re.IGNORECASE,
 )
 
@@ -67,6 +67,7 @@ def clean(text: str) -> str:
     text = str(text).lower()
     text = re.sub(r"0[,.]?6kv|1[,.]?0kv", "", text)
     text = text.replace("mm2", "").replace("mm²", "")
+    text = text.replace("mm", "").replace("mm²", "")
     text = text.replace("(", "").replace(")", "")
     text = text.replace("/", " ").replace(",", "")
     text = text.replace("-", " ")
@@ -165,7 +166,7 @@ def material_structure_score(query_tokens, target_tokens):
         "al": 1.0,
         "xlpe": 0.9,
         "pvc": 0.7,
-        "lszh": 0.6,
+        "data": 0.6,
         "pe": 0.5,
         "hdpe": 0.5,
         "dsta": 0.4,
