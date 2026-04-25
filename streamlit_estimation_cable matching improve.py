@@ -59,7 +59,7 @@ AUX_RE = re.compile(
     flags=re.IGNORECASE,
 )
 MATERIAL_TOKEN_RE = re.compile(
-    r"(cu|aluminium|al|xlpe|pvc|pe|lszh|hdpe|dsta|sta|swa)",
+    r"(cu|aluminium|al|xlpe|pvc|pe|lszh|hdpe|dsta|fr|swa)",
     flags=re.IGNORECASE,
 )
 
@@ -169,7 +169,7 @@ def material_structure_score(query_tokens, target_tokens):
         "pe": 0.5,
         "hdpe": 0.5,
         "dsta": 0.4,
-        "sta": 0.4,
+        "fr": 0.4,
         "swa": 0.4,
     }
 
