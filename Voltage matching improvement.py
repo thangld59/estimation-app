@@ -168,6 +168,19 @@ def extract_material_structure_tokens(text: str):
     return norm
 
 def material_structure_score(query_tokens, target_tokens):
+    def voltage_score(q_v, r_v):
+    if not q_v or not r_v:
+        return 50
+
+    q_u = q_v[1]
+    r_u = r_v[1]
+
+    if r_u < q_u:
+        return 0
+    elif r_u == q_u:
+        return 100
+    else:
+        return 80
     if not query_tokens and not target_tokens:
         return 100.0
     if not query_tokens or not target_tokens:
