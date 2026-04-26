@@ -103,6 +103,12 @@ def voltage_score(q_v, r_v):
 # ------------------------------
 def clean(text: str) -> str:
     text = str(text).lower()
+    # normalize unit variations
+    text = re.sub(r"(sqmm|sq\.mm|sqm|mm2|mm²)", "mm2", text)
+    text = re.sub(r"(\d)\s*mm2", r"\1mm2", text)
+    text = re.sub(r"(\d)\s*mm", r"\1mm", text)
+    # normalize core format
+    text = re.sub(r"(\d)\s*[cC]\s*[x×]\s*(\d+)", r"\1x\2", text)
     text = re.sub(r"0[,.]?6kv|1[,.]?0kv", "", text)
     text = text.replace("mm2", "").replace("mm²", "")
     text = text.replace("mm", "")
