@@ -124,7 +124,7 @@ def clean(text: str) -> str:
 # Cable parsing
 # ------------------------------
 def parse_cable_spec(text: str) -> dict:
-    text = str(text).lower().replace("mm2", "").replace("mm²", "")
+    text = clean(text)
     text = re.sub(r"\s+", " ", text)
 
     main_match = MAIN_SIZE_RE.search(text)
