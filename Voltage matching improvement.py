@@ -49,21 +49,27 @@ def load_users():
         return DEFAULT_USERS.copy()
 
 USERS = load_users()
+# ------------------------------
+# Matching utilities (fixed)
+# ------------------------------
 
-# ------------------------------
-# Matching utilities (unchanged logic)
-# ------------------------------
 MAIN_SIZE_RE = re.compile(r"\b(\d{1,2})\s*[cC]?\s*[x×]\s*(\d{1,3}(?:\.\d+)?)\b")
 AUX_RE = re.compile(
     r"\+\s*(?:([1-9]\d*)\s*[cC]?\s*[x×]\s*)?((?:pe|e|n))?(\d{1,3}(?:\.\d+)?)",
     flags=re.IGNORECASE,
 )
+
 MATERIAL_TOKEN_RE = re.compile(
-    r"(cu|aluminium|al|xlpe|pvc|pe|data|hdpe|dsta|fr|swa)\b",
+    r"\b(cu|aluminium|al|xlpe|pvc|pe|data|hdpe|dsta|fr|swa)\b",
     flags=re.IGNORECASE,
 )
+
 VOLTAGE_RE = re.compile(r"(\d+[.,]?\d*)\s*/\s*(\d+[.,]?\d*)\s*k?v", re.IGNORECASE)
 
+
+# ------------------------------
+# Voltage
+# ------------------------------
 def extract_voltage(text):
     text = str(text).lower()
     m = VOLTAGE_RE.search(text)
@@ -75,101 +81,9 @@ def extract_voltage(text):
         return (v1, v2)
     except:
         return None
-        
-def clean(text: str) -> str:
-    text = str(text).lower()
-    text = re.sub(r"0[,.]?6kv|1[,.]?0kv", "", text)
-    text = text.replace("mm2", "").replace("mm²", "")
-    text = text.replace("mm", "").replace("mm²", "")
-    text = text.replace("(", "").replace(")", "")
-    text = text.replace("/", " ").replace(",", "")
-    text = text.replace("-", " ")
-    text = text.replace("cáp", "").replace("cable", "").replace("dây", "")
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
 
-def parse_cable_spec(text: str) -> dict:
-    text = str(text).lower().replace("mm2", "").replace("mm²", "")
-    text = re.sub(r"\s+", " ", text)
 
-    main_match = MAIN_SIZE_RE.search(text)
-    main_cores, main_size = None, None
-    if main_match:
-        try:
-            main_cores = int(main_match.group(1))
-        except Exception:
-            main_cores = None
-        try:
-            main_size = float(main_match.group(2))
-        except Exception:
-            main_size = None
-
-    aux_match = AUX_RE.search(text)
-    aux_type = ""
-    aux_cores = None
-    aux_size = None
-    if aux_match:
-        cores_str = aux_match.group(1)
-        type_str = aux_match.group(2)
-        size_str = aux_match.group(3)
-
-        if cores_str:
-            try:
-                aux_cores = int(cores_str)
-            except Exception:
-                aux_cores = None
-
-        if type_str:
-            t = type_str.strip().upper()
-            if t in ["E", "PE"]:
-                aux_type = "E"
-            elif t == "N":
-                aux_type = "N"
-
-        try:
-            aux_size = float(size_str)
-        except Exception:
-            aux_size = None
-
-    main_key = (
-        f"{int(main_cores)}x{int(main_size) if main_size and float(main_size).is_integer() else main_size}"
-        if main_cores and main_size
-        else ""
-    )
-
-    if aux_type and aux_size:
-        aux_key = f"{aux_type}{int(aux_size) if aux_size and float(aux_size).is_integer() else aux_size}"
-    elif aux_cores and aux_size:
-        aux_key = f"{aux_cores}x{int(aux_size) if aux_size and float(aux_size).is_integer() else aux_size}"
-    else:
-        aux_key = ""
-
-    full_key = f"{main_key}+{aux_key}" if main_key and aux_key else main_key
-    return {
-        "main_cores": main_cores,
-        "main_size": main_size,
-        "aux_type": aux_type,
-        "aux_cores": aux_cores,
-        "aux_size": aux_size,
-        "main_key": main_key,
-        "aux_key": aux_key,
-        "full_key": full_key,
-    }
-
-def extract_material_structure_tokens(text: str):
-    text = str(text).lower()
-    tokens = MATERIAL_TOKEN_RE.findall(text)
-    norm = []
-    for t in tokens:
-        tt = t.lower()
-        if tt == "aluminium":
-            norm.append("al")
-        else:
-            norm.append(tt)
-    return norm
-
-def material_structure_score(query_tokens, target_tokens):
-    def voltage_score(q_v, r_v):
+def voltage_score(q_v, r_v):
     if not q_v or not r_v:
         return 50
 
@@ -182,6 +96,95 @@ def material_structure_score(query_tokens, target_tokens):
         return 100
     else:
         return 80
+
+
+# ------------------------------
+# Clean
+# ------------------------------
+def clean(text: str) -> str:
+    text = str(text).lower()
+    text = re.sub(r"0[,.]?6kv|1[,.]?0kv", "", text)
+    text = text.replace("mm2", "").replace("mm²", "")
+    text = text.replace("mm", "")
+    text = text.replace("(", "").replace(")", "")
+    text = text.replace("/", " ").replace(",", "")
+    text = text.replace("-", " ")
+    text = text.replace("cáp", "").replace("cable", "").replace("dây", "")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+# ------------------------------
+# Cable parsing
+# ------------------------------
+def parse_cable_spec(text: str) -> dict:
+    text = str(text).lower().replace("mm2", "").replace("mm²", "")
+    text = re.sub(r"\s+", " ", text)
+
+    main_match = MAIN_SIZE_RE.search(text)
+    main_cores, main_size = None, None
+    if main_match:
+        try:
+            main_cores = int(main_match.group(1))
+        except:
+            pass
+        try:
+            main_size = float(main_match.group(2))
+        except:
+            pass
+
+    aux_match = AUX_RE.search(text)
+    aux_type, aux_cores, aux_size = "", None, None
+
+    if aux_match:
+        try:
+            aux_cores = int(aux_match.group(1)) if aux_match.group(1) else None
+        except:
+            pass
+
+        t = aux_match.group(2)
+        if t:
+            t = t.upper()
+            if t in ["E", "PE"]:
+                aux_type = "E"
+            elif t == "N":
+                aux_type = "N"
+
+        try:
+            aux_size = float(aux_match.group(3))
+        except:
+            pass
+
+    main_key = f"{main_cores}x{int(main_size) if main_size and main_size.is_integer() else main_size}" if main_cores and main_size else ""
+
+    if aux_type and aux_size:
+        aux_key = f"{aux_type}{int(aux_size) if aux_size and aux_size.is_integer() else aux_size}"
+    elif aux_cores and aux_size:
+        aux_key = f"{aux_cores}x{int(aux_size) if aux_size and aux_size.is_integer() else aux_size}"
+    else:
+        aux_key = ""
+
+    return {
+        "main_key": main_key,
+        "aux_key": aux_key,
+    }
+
+
+# ------------------------------
+# Material
+# ------------------------------
+def extract_material_structure_tokens(text: str):
+    tokens = MATERIAL_TOKEN_RE.findall(str(text).lower())
+    norm = []
+    for t in tokens:
+        if t == "aluminium":
+            norm.append("al")
+        else:
+            norm.append(t)
+    return norm
+
+
+def material_structure_score(query_tokens, target_tokens):
     if not query_tokens and not target_tokens:
         return 100.0
     if not query_tokens or not target_tokens:
@@ -206,76 +209,66 @@ def material_structure_score(query_tokens, target_tokens):
     match_score = 0.0
     possible_score = 0.0
 
-    all_keys = list(dict.fromkeys(q_set + t_set))
-    for k in all_keys:
+    for k in set(q_set + t_set):
         w = weights_map.get(k, 0.3)
         possible_score += w
         if k in q_set and k in t_set:
             match_score += w
 
-    base = (match_score / possible_score) * 100.0 if possible_score > 0 else 0.0
-    extra_in_target = len([k for k in t_set if k not in q_set])
-    extra_in_query = len([k for k in q_set if k not in t_set])
-    penalty = extra_in_target * 5.0 + extra_in_query * 2.0
-    score = max(0.0, base - penalty)
-    return score
+    base = (match_score / possible_score) * 100 if possible_score else 0
+    penalty = len([k for k in t_set if k not in q_set]) * 5
 
+    return max(0, base - penalty)
+
+
+# ------------------------------
+# Matching
+# ------------------------------
 def combined_match_score(
     query,
     q_main_key,
     q_aux_key,
     q_mats,
-    q_voltage,   # NEW
+    q_voltage,
     row_combined,
     r_main_key,
     r_aux_key,
     r_mats,
-    r_voltage,   # NEW
+    r_voltage,
     threshold,
     weights,
 ):
-    if not q_v or not r_v:
-        return 50
 
-    q_u = q_v[1]
-    r_u = r_v[1]
+    # HARD RULE voltage
+    if q_voltage and r_voltage:
+        if r_voltage[1] < q_voltage[1]:
+            return 0
 
-    if r_u < q_u:
-        return 0
-    elif r_u == q_u:
-        return 100
+    # size
+    if q_main_key == r_main_key:
+        size_score = 100
     else:
-        return 80
-    size_score = 0.0
-    cores_score = 0.0
-    mat_score = 0.0
+        size_score = fuzz.token_set_ratio(q_main_key, r_main_key)
 
-    if q_main_key and r_main_key:
-        if q_main_key == r_main_key:
-            size_score = 100.0
-        else:
-            size_score = fuzz.token_set_ratio(q_main_key, r_main_key)
+    # cores
+    if q_aux_key == r_aux_key:
+        cores_score = 100
     else:
-        size_score = fuzz.partial_ratio(query, row_combined)
+        cores_score = fuzz.token_set_ratio(str(q_aux_key), str(r_aux_key))
 
-    if q_aux_key and r_aux_key:
-        if q_aux_key == r_aux_key:
-            cores_score = 100.0
-        else:
-            cores_score = fuzz.token_set_ratio(str(q_aux_key), str(r_aux_key))
-    else:
-        cores_score = 100.0 if (not q_aux_key and not r_aux_key) else 0.0
-
+    # material
     mat_score = material_structure_score(q_mats, r_mats)
 
-   v_score = voltage_score(q_voltage, r_voltage)
+    # voltage
+    v_score = voltage_score(q_voltage, r_voltage)
 
-final = (
-    weights["size"] * size_score
-    + weights["cores"] * cores_score
-    + weights["material"] * mat_score
-    + 0.2 * v_score
-)
+    final = (
+        weights["size"] * size_score
+        + weights["cores"] * cores_score
+        + weights["material"] * mat_score
+        + 0.2 * v_score
+    )
+
     return final
 
 # ------------------------------
