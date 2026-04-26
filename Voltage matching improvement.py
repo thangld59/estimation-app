@@ -985,26 +985,28 @@ def page_estimation():
                                         r_main = r.get("main_key", "")
                                         r_aux = r.get("aux_key", "")
                                         r_mats = r.get("materials", [])
-r_voltage = r.get("voltage", None) # NEW
-q_voltage = row["voltage"] # NEW
-  # 🔴 HARD RULE
-        if q_voltage and r_voltage:
-            if r_voltage[1] < q_voltage[1]:
-                return 0
-                return combined_match_score(
-    query,
-    q_main,
-    q_aux,
-    q_mats,
-    q_voltage,     # NEW
-    r.get("combined", ""),
-    r_main,
-    r_aux,
-    r_mats,
-    r_voltage,     # NEW
-    match_threshold,
-    weights,
-)
+                                        r_voltage = r.get("voltage", None) # NEW
+                                        q_voltage = row["voltage"] # NEW
+                                        
+                                        # 🔴 HARD RULE
+                                        if q_voltage and r_voltage:
+                                            if r_voltage[1] < q_voltage[1]:
+                                                return 0
+                                                
+                                        return combined_match_score(
+                                            query,
+                                            q_main,
+                                            q_aux,
+                                            q_mats,
+                                            q_voltage,     # NEW
+                                            r.get("combined", ""),
+                                            r_main,
+                                            r_aux,
+                                            r_mats,
+                                            r_voltage,     # NEW
+                                            match_threshold,
+                                            weights,
+                                        )
                                     except Exception:
                                         return 0.0
 
