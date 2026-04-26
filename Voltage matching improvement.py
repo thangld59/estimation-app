@@ -59,7 +59,7 @@ AUX_RE = re.compile(
     flags=re.IGNORECASE,
 )
 MATERIAL_TOKEN_RE = re.compile(
-    r"(cu|aluminium|al|xlpe|pvc|pe|data|hdpe|dsta|fr|swa)",
+    r"(cu|aluminium|al|xlpe|pvc|pe|data|hdpe|dsta|fr|swa)\b",
     flags=re.IGNORECASE,
 )
 VOLTAGE_RE = re.compile(r"(\d+[.,]?\d*)\s*/\s*(\d+[.,]?\d*)\s*k?v", re.IGNORECASE)
@@ -75,6 +75,7 @@ def extract_voltage(text):
         return (v1, v2)
     except:
         return None
+        
 def clean(text: str) -> str:
     text = str(text).lower()
     text = re.sub(r"0[,.]?6kv|1[,.]?0kv", "", text)
@@ -224,16 +225,15 @@ def combined_match_score(
     q_main_key,
     q_aux_key,
     q_mats,
-q_voltage,   # NEW
+    q_voltage,   # NEW
     row_combined,
     r_main_key,
     r_aux_key,
     r_mats,
- r_voltage,   # NEW
+    r_voltage,   # NEW
     threshold,
     weights,
 ):
-def voltage_score(q_v, r_v):
     if not q_v or not r_v:
         return 50
 
@@ -914,7 +914,7 @@ def page_estimation():
                     est["materials"] = base_est.apply(
                         extract_material_structure_tokens
                     )
-est["voltage"] = base_est.apply(extract_voltage)
+                    est["voltage"] = base_est.apply(extract_voltage)
                     # read DB(s)
                     if selected_file == "All files":
                         frames = []
@@ -969,7 +969,7 @@ est["voltage"] = base_est.apply(extract_voltage)
                             db["materials"] = base_db.apply(
                                 extract_material_structure_tokens
                             )
-db["voltage"] = base_db.apply(extract_voltage)
+                            db["voltage"] = base_db.apply(extract_voltage)
  
                             results = []
                             for _, row in est.iterrows():
