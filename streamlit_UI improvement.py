@@ -1,204 +1,242 @@
 # ===============================
-# BUILDWISE - FINAL (WITH PASTE)
+# BUILDWISE - FULL MATCHING + PASTE
 # ===============================
 
 import streamlit as st
 import pandas as pd
 import os
 import re
-import json
 import io
-from io import BytesIO
-from datetime import datetime
 from rapidfuzz import fuzz
-from openpyxl import load_workbook
 
-# ------------------------------
-# PASTE EXCEL PARSE + MAP
-# ------------------------------
+# ===============================
+# CLEAN + NORMALIZE
+# ===============================
+def clean(text):
+    text = str(text).lower()
+    text = re.sub(r"(sqmm|sqm|mm2|mm²)", "mm2", text)
+    text = re.sub(r"(\d)\s*mm2", r"\1mm2", text)
+    text = re.sub(r"(\d)\s*[cC]\s*[x×]\s*(\d+)", r"\1x\2", text)
+    text = text.replace("/", " ")
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+# ===============================
+# PARSE CABLE
+# ===============================
+MAIN_RE = re.compile(r"(\d+)x(\d+)")
+
+def parse_cable_spec(text):
+    text = clean(text)
+    m = MAIN_RE.search(text)
+
+    if m:
+        return {
+            "main_key": f"{m.group(1)}x{m.group(2)}",
+            "aux_key": ""
+        }
+
+    return {"main_key": "", "aux_key": ""}
+
+# ===============================
+# MATERIAL
+# ===============================
+MATERIAL_RE = re.compile(r"(cu|xlpe|pvc|dsta|data|al)", re.I)
+
+def extract_material_structure_tokens(text):
+    return MATERIAL_RE.findall(str(text).lower())
+
+def material_structure_score(q, r):
+    if not q or not r:
+        return 0
+    return len(set(q)&set(r)) / len(set(q)|set(r)) * 100
+
+# ===============================
+# VOLTAGE
+# ===============================
+VOLTAGE_RE = re.compile(r"(\d+\.?\d*)\s*/\s*(\d+\.?\d*)\s*k?v", re.I)
+
+def extract_voltage(text):
+    m = VOLTAGE_RE.search(str(text))
+    if not m:
+        return None
+    return (float(m.group(1)), float(m.group(2)))
+
+# ===============================
+# MATCH SCORE
+# ===============================
+def combined_match_score(q, qm, qa, qmat, qv, r, rm, ra, rmat, rv):
+    size_score = fuzz.token_set_ratio(qm, rm)
+    core_score = fuzz.token_set_ratio(qa, ra)
+    mat_score = material_structure_score(qmat, rmat)
+
+    # HARD RULE VOLTAGE
+    if qv and rv:
+        if rv[1] < qv[1]:
+            return 0
+
+    return 0.45*size_score + 0.25*core_score + 0.30*mat_score
+
+# ===============================
+# PASTE PARSE
+# ===============================
 def parse_paste_to_df(paste_text):
     try:
-        df = pd.read_csv(io.StringIO(paste_text), sep="\t")
-        return df
+        return pd.read_csv(io.StringIO(paste_text), sep="\t")
     except:
         return None
 
-
 def map_columns(df):
-    import re
 
-    def is_number(val):
+    def is_number(x):
         try:
-            float(str(val).replace(",", ""))
+            float(str(x))
             return True
         except:
             return False
 
-    def is_cable(text):
-        text = str(text).lower()
-        return bool(re.search(r"\d+x\d+|\d+mm2|cu|xlpe|pvc", text))
-
-    col_scores = {}
-
-    for col in df.columns:
-        values = df[col].astype(str)
-
-        score = {
-            "Mô tả": 0,
-            "Số lượng": 0,
-            "Model": 0,
-            "Hãng": 0,
-            "Đơn vị": 0,
-        }
-
-        for v in values.head(10):
-            v_low = str(v).lower()
-
-            if is_number(v):
-                score["Số lượng"] += 2
-
-            if is_cable(v):
-                score["Mô tả"] += 2
-
-            if len(str(v).split()) <= 3:
-                score["Model"] += 1
-
-            if any(b in v_low for b in ["cadisun", "cadivi", "ls", "lapp"]):
-                score["Hãng"] += 2
-
-            if v_low in ["m", "mtr", "pcs"]:
-                score["Đơn vị"] += 2
-
-        col_scores[col] = score
-
-    assigned = {}
-
-    for target in ["Mô tả", "Số lượng", "Model", "Hãng", "Đơn vị"]:
-        best_col = None
-        best_score = 0
-
-        for col, scores in col_scores.items():
-            if scores[target] > best_score and col not in assigned.values():
-                best_score = scores[target]
-                best_col = col
-
-        if best_col:
-            assigned[target] = best_col
-
     result = pd.DataFrame()
 
-    for target in ["Model", "Mô tả", "Hãng", "Đơn vị", "Số lượng"]:
-        if target in assigned:
-            result[target] = df[assigned[target]]
-        else:
-            result[target] = ""
+    # detect quantity
+    scores = {}
+    for col in df.columns:
+        scores[col] = sum(is_number(v) for v in df[col].head(10))
+
+    qty_col = max(scores, key=scores.get)
+
+    # detect description
+    desc_col = None
+    for col in df.columns:
+        if col == qty_col:
+            continue
+        if any(re.search(r"\d+x\d+|cu|xlpe|pvc", str(v).lower()) for v in df[col][:10]):
+            desc_col = col
+            break
+
+    result["Mô tả"] = df[desc_col] if desc_col else ""
+    result["Số lượng"] = df[qty_col] if qty_col else ""
+    result["Đơn vị"] = ""
+    result["Model"] = ""
 
     return result
 
-
 # ===============================
-# STREAMLIT APP (RÚT GỌN UI CHỈ MATCH)
+# STREAMLIT UI
 # ===============================
-st.set_page_config(page_title="BuildWise", layout="wide")
+st.set_page_config(layout="wide")
+st.title("BuildWise Estimation Tool")
 
-user_folder = "user_data"
-os.makedirs(user_folder, exist_ok=True)
+DATA_DIR = "data"
+os.makedirs(DATA_DIR, exist_ok=True)
 
-# ------------------------------
-# Upload price list
-# ------------------------------
+# -------------------------------
+# PRICE LIST
+# -------------------------------
 st.subheader("1. Upload price list")
 
 uploads = st.file_uploader("Upload price list", type=["xlsx"], accept_multiple_files=True)
 
 if uploads:
     for f in uploads:
-        with open(os.path.join(user_folder, f.name), "wb") as out:
+        with open(os.path.join(DATA_DIR, f.name), "wb") as out:
             out.write(f.read())
-    st.success("Uploaded!")
 
-price_list_files = [f for f in os.listdir(user_folder) if f.endswith(".xlsx")]
+price_files = [f for f in os.listdir(DATA_DIR) if f.endswith(".xlsx")]
 
-# ------------------------------
-# Matching
-# ------------------------------
+# -------------------------------
+# MATCHING
+# -------------------------------
 st.subheader("2. Matching")
 
-estimation_file = st.file_uploader("Upload estimation file", type=["xlsx"])
+est_file = st.file_uploader("Upload estimation file", type=["xlsx"])
 
 st.markdown("### 📥 Paste from Excel")
-
-paste_text = st.text_area("Paste data", height=200)
+paste_text = st.text_area("Paste here", height=200)
 
 if st.button("Chuẩn hóa dữ liệu"):
     df_raw = parse_paste_to_df(paste_text)
 
-    if df_raw is None:
-        st.error("Cannot read data")
-    else:
+    if df_raw is not None:
         df_std = map_columns(df_raw)
         df_std.insert(0, "TT", range(1, len(df_std)+1))
-        st.session_state["est_table"] = df_std
+        st.session_state["est"] = df_std
 
-if "est_table" in st.session_state:
-    st.dataframe(st.session_state["est_table"], use_container_width=True)
+if "est" in st.session_state:
+    st.dataframe(st.session_state["est"], use_container_width=True)
 
-# ------------------------------
+# -------------------------------
 # MATCH
-# ------------------------------
+# -------------------------------
 if st.button("Match now"):
 
-    if estimation_file is None and "est_table" not in st.session_state:
-        st.error("Need input")
+    if est_file is None and "est" not in st.session_state:
+        st.error("No estimation input")
         st.stop()
 
-    if not price_list_files:
-        st.error("Need price list")
+    if not price_files:
+        st.error("No price list")
         st.stop()
 
     # READ EST
-    if estimation_file:
-        est = pd.read_excel(estimation_file)
+    if est_file:
+        est = pd.read_excel(est_file)
     else:
-        est = st.session_state["est_table"]
+        est = st.session_state["est"]
+
+    # PREPROCESS EST
+    base_est = est["Mô tả"].fillna("")
+    est["combined"] = base_est.apply(clean)
+
+    parsed_est = base_est.apply(parse_cable_spec)
+    est["main_key"] = parsed_est.apply(lambda d: d["main_key"])
+    est["aux_key"] = parsed_est.apply(lambda d: d["aux_key"])
+    est["materials"] = base_est.apply(extract_material_structure_tokens)
+    est["voltage"] = base_est.apply(extract_voltage)
 
     # READ DB
-    frames = []
-    for f in price_list_files:
-        df = pd.read_excel(os.path.join(user_folder, f))
-        frames.append(df)
+    db = pd.concat([pd.read_excel(os.path.join(DATA_DIR, f)) for f in price_files])
 
-    db = pd.concat(frames)
+    base_db = db.iloc[:,1].fillna("")
+    db["combined"] = base_db.apply(clean)
 
-    # SIMPLE MATCH (fallback demo)
+    parsed_db = base_db.apply(parse_cable_spec)
+    db["main_key"] = parsed_db.apply(lambda d: d["main_key"])
+    db["aux_key"] = parsed_db.apply(lambda d: d["aux_key"])
+    db["materials"] = base_db.apply(extract_material_structure_tokens)
+    db["voltage"] = base_db.apply(extract_voltage)
+
     results = []
 
     for _, row in est.iterrows():
-        q = str(row.get("Mô tả", "")).lower()
+        q = row["combined"]
 
         best = None
         best_score = -1
 
         for _, r in db.iterrows():
-            score = fuzz.token_set_ratio(q, str(r[1]).lower())
+            score = combined_match_score(
+                q,
+                row["main_key"],
+                row["aux_key"],
+                row["materials"],
+                row["voltage"],
+                r["combined"],
+                r["main_key"],
+                r["aux_key"],
+                r["materials"],
+                r["voltage"],
+            )
 
             if score > best_score:
                 best_score = score
                 best = r
 
-        if best is not None:
-            results.append([
-                best[0],
-                row.get("Mô tả", ""),
-                best[1],
-                row.get("Đơn vị", ""),
-                row.get("Số lượng", ""),
-            ])
-        else:
-            results.append(["", row.get("Mô tả", ""), "", "", ""])
+        results.append([
+            row["Mô tả"],
+            best.iloc[1] if best is not None else "",
+            best_score
+        ])
 
-    df_res = pd.DataFrame(results, columns=[
-        "Model", "Requested", "Matched", "Unit", "Qty"
-    ])
+    df_res = pd.DataFrame(results, columns=["Requested", "Matched", "Score"])
 
     st.dataframe(df_res, use_container_width=True)
