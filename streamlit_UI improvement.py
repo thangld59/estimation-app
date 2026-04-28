@@ -1068,36 +1068,129 @@ weights = {
 col_match_btn, _ = st.columns([1, 3])
 with col_match_btn:
     run_matching = st.button("Match now")
-    if run_matching:
-        if estimation_file is None:
-            st.error("Please upload an estimation file first.")
-        elif not price_list_files:
-            st.error("Please upload at least one price list first.")
-        else:
-            # read estimation
-            try:
-                est = pd.read_excel(estimation_file).dropna(how="all")
-            except Exception as e:
-                st.error(f"Cannot read estimation file: {e}")
-                est = None
+if run_matching:
+    if estimation_file is None and "est_table" not in st.session_state:
+        st.error("Please upload file or paste data first.")
+        st.stop()
 
-            if est is not None:
-                est_cols = est.columns.tolist()
-                if len(est_cols) < 5:
-                    st.error(
-                        "Estimation file must have at least 5 columns (Model, Description, Spec, Unit, Quantity)."
-                    )
-                else:
-                    base_est = (
-                        est[est_cols[0]].fillna("")
-                        + " "
-                        + est[est_cols[1]].fillna("")
-                        + " "
-                        + est[est_cols[2]].fillna("")
-                    )
-                    est["combined"] = base_est.apply(clean)
-                    parsed_est = base_est.apply(parse_cable_spec)
-                    est["main_key"] = parsed_est.apply(lambda d: d["main_key"])
+    elif not price_list_files:
+        st.error("Please upload at least one price list first.")
+        st.stop()
+
+    # -------------------------------
+    # INPUT SOURCE: FILE hoặc PASTE
+    # -------------------------------
+    if estimation_file is not None:
+        try:
+            est = pd.read_excel(estimation_file).dropna(how="all")
+        except Exception as e:
+            st.error(f"Cannot read estimation file: {e}")
+            est = None
+
+    elif "est_table" in st.session_state:
+        est = st.session_state["est_table"].copy()
+
+    else:
+        est = None
+
+    # -------------------------------
+    # PROCESS ESTIMATION
+    # -------------------------------
+    if est is not None:
+
+        # -------------------------------
+        # CASE 1: FILE
+        # -------------------------------
+        if estimation_file is not None:
+            est_cols = est.columns.tolist()
+
+            if len(est_cols) < 5:
+                st.error(
+                    "Estimation file must have at least 5 columns (Model, Description, Spec, Unit, Quantity)."
+                )
+                st.stop()
+
+            base_est = (
+                est[est_cols[0]].fillna("")
+                + " "
+                + est[est_cols[1]].fillna("")
+                + " "
+                + est[est_cols[2]].fillna("")
+            )
+
+        # -------------------------------
+        # CASE 2: PASTE
+        # -------------------------------
+        else:
+            base_est = est["Mô tả"].fillna("")
+
+            # chuẩn hóa quantity
+            est["quantity"] = pd.to_numeric(est["Số lượng"], errors="coerce")
+
+        # -------------------------------
+        # COMMON PROCESS
+        # -------------------------------
+        est["combined"] = base_est.apply(clean)
+        parsed_est = base_est.apply(parse_cable_spec)
+
+        est["main_key"] = parsed_est.apply(lambda d: d["main_key"])
+        est["aux_key"] = parsed_est.apply(lambda d: d["aux_key"])
+        est["materials"] = base_est.apply(extract_material_structure_tokens)
+        est["voltage"] = base_est.apply(extract_voltage)
+
+        # -------------------------------
+        # READ PRICE LIST
+        # -------------------------------
+        if selected_file == "All files":
+            frames = []
+            for f in price_list_files:
+                try:
+                    df_pl = pd.read_excel(
+                        os.path.join(user_folder, f)
+                    ).dropna(how="all")
+                    df_pl["source"] = f
+                    frames.append(df_pl)
+                except Exception:
+                    continue
+
+            db = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+        else:
+            try:
+                db = pd.read_excel(
+                    os.path.join(user_folder, selected_file)
+                ).dropna(how="all")
+                db["source"] = selected_file
+            except Exception as e:
+                st.error(f"Cannot read price list: {e}")
+                db = pd.DataFrame()
+
+        # -------------------------------
+        # PROCESS DB
+        # -------------------------------
+        if db.empty:
+            st.error("No rows found in price list file(s).")
+
+        else:
+            db_cols = db.columns.tolist()
+
+            if len(db_cols) < 6:
+                st.error(
+                    "Price list requires at least 6 columns (Model, Description, Spec, ..., MaterialCost, LabourCost)."
+                )
+            else:
+                base_db = (
+                    db[db_cols[0]].fillna("")
+                    + " "
+                    + db[db_cols[1]].fillna("")
+                    + " "
+                    + db[db_cols[2]].fillna("")
+                )
+
+                db["combined"] = base_db.apply(clean)
+                parsed_db = base_db.apply(parse_cable_spec)
+
+                db["main_key"] = parsed_db.apply(lambda d: d["main_key"])
                     est["aux_key"] = parsed_est.apply(lambda d: d["aux_key"])
                     est["materials"] = base_est.apply(
                         extract_material_structure_tokens
