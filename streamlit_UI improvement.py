@@ -1068,6 +1068,7 @@ weights = {
 col_match_btn, _ = st.columns([1, 3])
 with col_match_btn:
     run_matching = st.button("Match now")
+    price_list_files = list_price_list_files(user_folder)
 if run_matching:
     if estimation_file is None and "est_table" not in st.session_state:
         st.error("Please upload file or paste data first.")
