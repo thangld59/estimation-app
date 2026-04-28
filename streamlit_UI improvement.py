@@ -1191,11 +1191,11 @@ if run_matching:
                 parsed_db = base_db.apply(parse_cable_spec)
 
                 db["main_key"] = parsed_db.apply(lambda d: d["main_key"])
-                    est["aux_key"] = parsed_est.apply(lambda d: d["aux_key"])
-                    est["materials"] = base_est.apply(
+                est["aux_key"] = parsed_est.apply(lambda d: d["aux_key"])
+                est["materials"] = base_est.apply(
                         extract_material_structure_tokens
                     )
-                    est["voltage"] = base_est.apply(extract_voltage)
+                est["voltage"] = base_est.apply(extract_voltage)
                     # read DB(s)
                     if selected_file == "All files":
                         frames = []
