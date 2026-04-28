@@ -1,164 +1,115 @@
-# =============================
-# BUILDWISE - CLEAN VERSION
-# =============================
+# ===============================
+# BUILDWISE - FINAL (WITH PASTE)
+# ===============================
 
 import streamlit as st
 import pandas as pd
 import os
-import io
 import re
+import json
+import io
+from io import BytesIO
+from datetime import datetime
 from rapidfuzz import fuzz
+from openpyxl import load_workbook
 
-# -------------------------
-# CONFIG
-# -------------------------
+# ------------------------------
+# PASTE EXCEL PARSE + MAP
+# ------------------------------
+def parse_paste_to_df(paste_text):
+    try:
+        df = pd.read_csv(io.StringIO(paste_text), sep="\t")
+        return df
+    except:
+        return None
+
+
+def map_columns(df):
+    import re
+
+    def is_number(val):
+        try:
+            float(str(val).replace(",", ""))
+            return True
+        except:
+            return False
+
+    def is_cable(text):
+        text = str(text).lower()
+        return bool(re.search(r"\d+x\d+|\d+mm2|cu|xlpe|pvc", text))
+
+    col_scores = {}
+
+    for col in df.columns:
+        values = df[col].astype(str)
+
+        score = {
+            "Mô tả": 0,
+            "Số lượng": 0,
+            "Model": 0,
+            "Hãng": 0,
+            "Đơn vị": 0,
+        }
+
+        for v in values.head(10):
+            v_low = str(v).lower()
+
+            if is_number(v):
+                score["Số lượng"] += 2
+
+            if is_cable(v):
+                score["Mô tả"] += 2
+
+            if len(str(v).split()) <= 3:
+                score["Model"] += 1
+
+            if any(b in v_low for b in ["cadisun", "cadivi", "ls", "lapp"]):
+                score["Hãng"] += 2
+
+            if v_low in ["m", "mtr", "pcs"]:
+                score["Đơn vị"] += 2
+
+        col_scores[col] = score
+
+    assigned = {}
+
+    for target in ["Mô tả", "Số lượng", "Model", "Hãng", "Đơn vị"]:
+        best_col = None
+        best_score = 0
+
+        for col, scores in col_scores.items():
+            if scores[target] > best_score and col not in assigned.values():
+                best_score = scores[target]
+                best_col = col
+
+        if best_col:
+            assigned[target] = best_col
+
+    result = pd.DataFrame()
+
+    for target in ["Model", "Mô tả", "Hãng", "Đơn vị", "Số lượng"]:
+        if target in assigned:
+            result[target] = df[assigned[target]]
+        else:
+            result[target] = ""
+
+    return result
+
+
+# ===============================
+# STREAMLIT APP (RÚT GỌN UI CHỈ MATCH)
+# ===============================
 st.set_page_config(page_title="BuildWise", layout="wide")
 
 user_folder = "user_data"
 os.makedirs(user_folder, exist_ok=True)
 
-# -------------------------
-# HELPERS
-# -------------------------
-def list_price_list_files(folder):
-    return [f for f in os.listdir(folder) if f.endswith(".xlsx")]
+# ------------------------------
+# Upload price list
+# ------------------------------
+st.subheader("1. Upload price list")
 
-# -------------------------
-# CLEAN TEXT
-# -------------------------
-def clean(text):
-    text = str(text).lower()
-    text = re.sub(r"(sqmm|sqm|mm2)", "mm2", text)
-    text = re.sub(r"(\d)\s*mm2", r"\1mm2", text)
-    text = text.replace("mm2", "")
-    text = text.replace("/", " ")
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
-
-# -------------------------
-# PARSE PASTE (SMART)
-# -------------------------
-def parse_paste_to_df(paste_text):
-    try:
-        lines = paste_text.strip().split("\n")
-        data = []
-
-        for line in lines:
-            parts = re.split(r"\t| {2,}", line.strip())
-
-            if len(parts) == 1:
-                parts = line.split()
-
-            data.append(parts)
-
-        df = pd.DataFrame(data)
-
-        # detect header
-        header_keywords = ["mô tả", "qty", "sl", "unit"]
-
-        first_row = df.iloc[0].astype(str).str.lower().tolist()
-
-        if any(any(k in c for k in header_keywords) for c in first_row):
-            df.columns = df.iloc[0]
-            df = df[1:]
-            df.reset_index(drop=True, inplace=True)
-        else:
-            df.columns = [f"col_{i}" for i in range(df.shape[1])]
-
-        return df
-
-    except:
-        return None
-
-# -------------------------
-# MAP COLUMNS (SMART)
-# -------------------------
-def map_columns(df):
-
-    def is_number(x):
-        try:
-            float(str(x))
-            return True
-        except:
-            return False
-
-    result = pd.DataFrame()
-
-    # detect quantity = column nhiều số nhất
-    scores = {}
-
-    for col in df.columns:
-        values = df[col].astype(str)
-        num_count = sum(is_number(v) for v in values[:10])
-        scores[col] = num_count
-
-    qty_col = max(scores, key=scores.get)
-
-    # detect description = column có cable pattern
-    desc_col = None
-    for col in df.columns:
-        if col == qty_col:
-            continue
-        if any(re.search(r"\d+x\d+|cu|pvc|xlpe", str(v).lower()) for v in df[col][:10]):
-            desc_col = col
-            break
-
-    result["Mô tả"] = df[desc_col] if desc_col else ""
-    result["Số lượng"] = df[qty_col] if qty_col else ""
-
-    result["Model"] = ""
-    result["Hãng"] = ""
-    result["Đơn vị"] = ""
-
-    return result
-
-# -------------------------
-# MATCH FUNCTION (SIMPLE)
-# -------------------------
-def match_simple(est, db):
-
-    results = []
-
-    for _, row in est.iterrows():
-        q = clean(row["Mô tả"])
-
-        best = None
-        best_score = -1
-
-        for _, r in db.iterrows():
-            score = fuzz.token_set_ratio(q, clean(r[1]))
-
-            if score > best_score:
-                best_score = score
-                best = r
-
-        if best is not None:
-            results.append([
-                best[0],
-                row["Mô tả"],
-                best[1],
-                row["Đơn vị"],
-                row["Số lượng"],
-            ])
-        else:
-            results.append(["", row["Mô tả"], "", "", ""])
-
-    return pd.DataFrame(results, columns=[
-        "Model",
-        "Description (requested)",
-        "Description (proposed)",
-        "Unit",
-        "Quantity"
-    ])
-
-# =========================
-# UI
-# =========================
-
-# 1. UPLOAD PRICE LIST
-st.subheader("1. Upload price list files")
-
-uploads = st.file_uploader("Upload", type=["xlsx"], accept_multiple_files=True)
+uploads = st.file_uploader("Upload price list", type=["xlsx"], accept_multiple_files=True)
 
 if uploads:
     for f in uploads:
@@ -166,50 +117,38 @@ if uploads:
             out.write(f.read())
     st.success("Uploaded!")
 
-# -------------------------
-# 2. MANAGE
-# -------------------------
-st.subheader("2. Manage price lists")
+price_list_files = [f for f in os.listdir(user_folder) if f.endswith(".xlsx")]
 
-price_list_files = list_price_list_files(user_folder)
+# ------------------------------
+# Matching
+# ------------------------------
+st.subheader("2. Matching")
 
-if price_list_files:
-    st.write(price_list_files)
-else:
-    st.info("No price list")
-
-selected_file = st.selectbox("Select file", ["All files"] + price_list_files)
-
-# -------------------------
-# 3. MATCHING
-# -------------------------
-st.subheader("3. Matching estimation request file")
-
-estimation_file = st.file_uploader("Upload estimation", type=["xlsx"])
+estimation_file = st.file_uploader("Upload estimation file", type=["xlsx"])
 
 st.markdown("### 📥 Paste from Excel")
 
-paste_text = st.text_area("Paste here", height=200)
+paste_text = st.text_area("Paste data", height=200)
 
 if st.button("Chuẩn hóa dữ liệu"):
     df_raw = parse_paste_to_df(paste_text)
 
     if df_raw is None:
-        st.error("Cannot read paste")
+        st.error("Cannot read data")
     else:
         df_std = map_columns(df_raw)
         df_std.insert(0, "TT", range(1, len(df_std)+1))
-        st.session_state["est"] = df_std
+        st.session_state["est_table"] = df_std
 
-if "est" in st.session_state:
-    st.dataframe(st.session_state["est"], use_container_width=True)
+if "est_table" in st.session_state:
+    st.dataframe(st.session_state["est_table"], use_container_width=True)
 
-# -------------------------
-# MATCH BUTTON
-# -------------------------
+# ------------------------------
+# MATCH
+# ------------------------------
 if st.button("Match now"):
 
-    if estimation_file is None and "est" not in st.session_state:
+    if estimation_file is None and "est_table" not in st.session_state:
         st.error("Need input")
         st.stop()
 
@@ -220,9 +159,8 @@ if st.button("Match now"):
     # READ EST
     if estimation_file:
         est = pd.read_excel(estimation_file)
-        est.columns = ["Model","Mô tả","Hãng","Đơn vị","Số lượng"]
     else:
-        est = st.session_state["est"]
+        est = st.session_state["est_table"]
 
     # READ DB
     frames = []
@@ -232,11 +170,35 @@ if st.button("Match now"):
 
     db = pd.concat(frames)
 
-    result = match_simple(est, db)
+    # SIMPLE MATCH (fallback demo)
+    results = []
 
-    st.dataframe(result, use_container_width=True)
+    for _, row in est.iterrows():
+        q = str(row.get("Mô tả", "")).lower()
 
-# -------------------------
-# 4. QUOTATION
-# -------------------------
-st.subheader("4. Quotation generation")
+        best = None
+        best_score = -1
+
+        for _, r in db.iterrows():
+            score = fuzz.token_set_ratio(q, str(r[1]).lower())
+
+            if score > best_score:
+                best_score = score
+                best = r
+
+        if best is not None:
+            results.append([
+                best[0],
+                row.get("Mô tả", ""),
+                best[1],
+                row.get("Đơn vị", ""),
+                row.get("Số lượng", ""),
+            ])
+        else:
+            results.append(["", row.get("Mô tả", ""), "", "", ""])
+
+    df_res = pd.DataFrame(results, columns=[
+        "Model", "Requested", "Matched", "Unit", "Qty"
+    ])
+
+    st.dataframe(df_res, use_container_width=True)
