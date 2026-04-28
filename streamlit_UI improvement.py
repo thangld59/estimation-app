@@ -835,6 +835,7 @@ def page_estimation():
         ["All files"] + price_list_files,
         index=0,
     )
+    st.session_state["selected_file"] = selected_file
 
     if price_list_files:
         col_a, col_b = st.columns([3, 1])
@@ -862,7 +863,6 @@ estimation_file = st.file_uploader(
     type=["xlsx"],
     key="estimation_file_main",
 )
-
 # -------------------------------
 # PASTE EXCEL
 # -------------------------------
@@ -1069,6 +1069,7 @@ col_match_btn, _ = st.columns([1, 3])
 with col_match_btn:
     run_matching = st.button("Match now")
     price_list_files = list_price_list_files(user_folder)
+    selected_file = st.session_state.get("selected_file", "All files")
 if run_matching:
     if estimation_file is None and "est_table" not in st.session_state:
         st.error("Please upload file or paste data first.")
