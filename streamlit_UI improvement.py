@@ -879,40 +879,96 @@ paste_text = st.text_area(
 # -------------------------------
 def parse_paste_to_df(paste_text):
     try:
-        df = pd.read_csv(io.StringIO(paste_text), sep="\t")
+        df = pd.read_csv(io.StringIO(paste_text), sep="\t", header=None)
+
+        # detect header (row 0 có chứa keyword?)
+        header_keywords = ["mô tả", "description", "qty", "sl", "đơn vị", "unit"]
+
+        first_row = df.iloc[0].astype(str).str.lower().tolist()
+
+        if any(any(k in cell for k in header_keywords) for cell in first_row):
+            df.columns = df.iloc[0]
+            df = df[1:]
+            df.reset_index(drop=True, inplace=True)
+        else:
+            df.columns = [f"col_{i}" for i in range(df.shape[1])]
+
         return df
+
     except:
         return None
-
-
 def map_columns(df):
-    col_map = {}
+    import re
+
+    def is_number(val):
+        try:
+            float(str(val).replace(",", ""))
+            return True
+        except:
+            return False
+
+    def is_cable(text):
+        text = str(text).lower()
+        return bool(re.search(r"\d+x\d+|\d+mm2|cu|xlpe|pvc", text))
+
+    col_scores = {}
 
     for col in df.columns:
-        c = col.lower()
+        values = df[col].astype(str)
 
-        if any(k in c for k in ["mô tả", "description", "desc"]):
-            col_map[col] = "Mô tả"
-        elif any(k in c for k in ["model", "item"]):
-            col_map[col] = "Model"
-        elif any(k in c for k in ["hãng", "brand"]):
-            col_map[col] = "Hãng"
-        elif any(k in c for k in ["đơn vị", "unit"]):
-            col_map[col] = "Đơn vị"
-        elif any(k in c for k in ["sl", "qty", "quantity", "số lượng"]):
-            col_map[col] = "Số lượng"
+        score = {
+            "Mô tả": 0,
+            "Số lượng": 0,
+            "Model": 0,
+            "Hãng": 0,
+            "Đơn vị": 0,
+        }
 
-    df = df.rename(columns=col_map)
+        for v in values.head(10):
+            v_low = v.lower()
 
-    std_cols = ["Model", "Mô tả", "Hãng", "Đơn vị", "Số lượng"]
-    for c in std_cols:
-        if c not in df.columns:
-            df[c] = ""
+            if is_number(v):
+                score["Số lượng"] += 2
 
-    df = df[std_cols]
+            if is_cable(v):
+                score["Mô tả"] += 2
 
-    return df
+            if len(v.split()) <= 3:
+                score["Model"] += 1
 
+            if any(b in v_low for b in ["cadisun", "cadivi", "ls", "lapp"]):
+                score["Hãng"] += 2
+
+            if v_low in ["m", "mtr", "pcs"]:
+                score["Đơn vị"] += 2
+
+        col_scores[col] = score
+
+    # chọn cột tốt nhất
+    assigned = {}
+
+    for target in ["Mô tả", "Số lượng", "Model", "Hãng", "Đơn vị"]:
+        best_col = None
+        best_score = 0
+
+        for col, scores in col_scores.items():
+            if scores[target] > best_score and col not in assigned.values():
+                best_score = scores[target]
+                best_col = col
+
+        if best_col:
+            assigned[target] = best_col
+
+    # build dataframe chuẩn
+    result = pd.DataFrame()
+
+    for target in ["Model", "Mô tả", "Hãng", "Đơn vị", "Số lượng"]:
+        if target in assigned:
+            result[target] = df[assigned[target]]
+        else:
+            result[target] = ""
+
+    return result
 
 # -------------------------------
 # BUTTON CHUẨN HÓA
