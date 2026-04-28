@@ -879,9 +879,19 @@ paste_text = st.text_area(
 # -------------------------------
 def parse_paste_to_df(paste_text):
     try:
+        # thử đọc dạng tab trước
         df = pd.read_csv(io.StringIO(paste_text), sep="\t", header=None)
 
-        # detect header (row 0 có chứa keyword?)
+        # nếu chỉ có 1 cột → dữ liệu không phải tab → dùng regex split
+        if df.shape[1] == 1:
+            df = pd.read_csv(
+                io.StringIO(paste_text),
+                sep=r"\s{2,}|\t",
+                engine="python",
+                header=None,
+            )
+
+        # detect header
         header_keywords = ["mô tả", "description", "qty", "sl", "đơn vị", "unit"]
 
         first_row = df.iloc[0].astype(str).str.lower().tolist()
@@ -895,7 +905,8 @@ def parse_paste_to_df(paste_text):
 
         return df
 
-    except:
+    except Exception as e:
+        print("Parse error:", e)
         return None
 def map_columns(df):
     import re
@@ -925,6 +936,7 @@ def map_columns(df):
         }
 
         for v in values.head(10):
+            v = str(v)
             v_low = v.lower()
 
             if is_number(v):
