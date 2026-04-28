@@ -879,17 +879,22 @@ paste_text = st.text_area(
 # -------------------------------
 def parse_paste_to_df(paste_text):
     try:
-        # thử đọc dạng tab trước
-        df = pd.read_csv(io.StringIO(paste_text), sep="\t", header=None)
+        import re
 
-        # nếu chỉ có 1 cột → dữ liệu không phải tab → dùng regex split
-        if df.shape[1] == 1:
-            df = pd.read_csv(
-                io.StringIO(paste_text),
-                sep=r"\s{2,}|\t",
-                engine="python",
-                header=None,
-            )
+        lines = paste_text.strip().split("\n")
+
+        data = []
+        for line in lines:
+            # split bằng: tab HOẶC nhiều space HOẶC 1 space nhưng có số cuối
+            parts = re.split(r"\t| {2,}", line.strip())
+
+            # nếu vẫn chỉ có 1 cột → fallback split nhẹ
+            if len(parts) == 1:
+                parts = line.strip().split()
+
+            data.append(parts)
+
+        df = pd.DataFrame(data)
 
         # detect header
         header_keywords = ["mô tả", "description", "qty", "sl", "đơn vị", "unit"]
@@ -936,30 +941,39 @@ def map_columns(df):
         }
 
         for v in values.head(10):
-            v = str(v)
+            v = str(v).strip()
             v_low = v.lower()
 
+            # 🔥 QUANTITY (tăng mạnh)
             if is_number(v):
-                score["Số lượng"] += 2
+                score["Số lượng"] += 5
 
+            # 🔥 DESCRIPTION
             if is_cable(v):
-                score["Mô tả"] += 2
+                score["Mô tả"] += 3
 
-            if len(v.split()) <= 3:
+            # MODEL (text ngắn)
+            if len(v.split()) <= 3 and not is_number(v):
                 score["Model"] += 1
 
+            # BRAND
             if any(b in v_low for b in ["cadisun", "cadivi", "ls", "lapp"]):
-                score["Hãng"] += 2
+                score["Hãng"] += 3
 
-            if v_low in ["m", "mtr", "pcs"]:
-                score["Đơn vị"] += 2
+            # 🔥 UNIT (strip + contains)
+            if v_low.strip() in ["m", "mtr", "pcs", "cai"]:
+                score["Đơn vị"] += 3
 
         col_scores[col] = score
 
-    # chọn cột tốt nhất
+    # -------------------------------
+    # CHỌN CỘT TỐT NHẤT
+    # -------------------------------
     assigned = {}
 
-    for target in ["Mô tả", "Số lượng", "Model", "Hãng", "Đơn vị"]:
+    priority_order = ["Số lượng", "Mô tả", "Model", "Hãng", "Đơn vị"]
+
+    for target in priority_order:
         best_col = None
         best_score = 0
 
@@ -971,7 +985,9 @@ def map_columns(df):
         if best_col:
             assigned[target] = best_col
 
-    # build dataframe chuẩn
+    # -------------------------------
+    # BUILD RESULT
+    # -------------------------------
     result = pd.DataFrame()
 
     for target in ["Model", "Mô tả", "Hãng", "Đơn vị", "Số lượng"]:
@@ -981,7 +997,6 @@ def map_columns(df):
             result[target] = ""
 
     return result
-
 # -------------------------------
 # BUTTON CHUẨN HÓA
 # -------------------------------
