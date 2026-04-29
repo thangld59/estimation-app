@@ -225,7 +225,89 @@ def material_structure_score(query_tokens, target_tokens):
     penalty = len([k for k in t_set if k not in q_set]) * 5
 
     return max(0, base - penalty)
+# ------------------------------
+# PASTE EXCEL PARSE
+# ------------------------------
+def parse_paste_to_df(paste_text):
+    try:
+        import io
+        df = pd.read_csv(io.StringIO(paste_text), sep="\t")
+        return df
+    except:
+        return None
 
+
+def map_columns(df):
+    import re
+
+    def is_number(val):
+        try:
+            float(str(val).replace(",", ""))
+            return True
+        except:
+            return False
+
+    def is_cable(text):
+        text = str(text).lower()
+        return bool(re.search(r"\d+x\d+|\d+mm2|cu|xlpe|pvc", text))
+
+    col_scores = {}
+
+    for col in df.columns:
+        values = df[col].astype(str)
+
+        score = {
+            "Mô tả": 0,
+            "Số lượng": 0,
+            "Model": 0,
+            "Hãng": 0,
+            "Đơn vị": 0,
+        }
+
+        for v in values.head(10):
+            v = str(v)
+            v_low = v.lower()
+
+            if is_number(v):
+                score["Số lượng"] += 2
+
+            if is_cable(v):
+                score["Mô tả"] += 2
+
+            if len(v.split()) <= 3:
+                score["Model"] += 1
+
+            if any(b in v_low for b in ["cadisun", "cadivi", "ls", "lapp"]):
+                score["Hãng"] += 2
+
+            if v_low in ["m", "mtr", "pcs"]:
+                score["Đơn vị"] += 2
+
+        col_scores[col] = score
+
+    assigned = {}
+
+    for target in ["Mô tả", "Số lượng", "Model", "Hãng", "Đơn vị"]:
+        best_col = None
+        best_score = 0
+
+        for col, scores in col_scores.items():
+            if scores[target] > best_score and col not in assigned.values():
+                best_score = scores[target]
+                best_col = col
+
+        if best_col:
+            assigned[target] = best_col
+
+    result = pd.DataFrame()
+
+    for target in ["Model", "Mô tả", "Hãng", "Đơn vị", "Số lượng"]:
+        if target in assigned:
+            result[target] = df[assigned[target]]
+        else:
+            result[target] = ""
+
+    return result
 
 # ------------------------------
 # Matching
@@ -860,8 +942,35 @@ def page_estimation():
         "Upload estimation request (.xlsx)",
         type=["xlsx"],
         key="estimation_file_main",
+        )
+    st.markdown("### 📥 Hoặc paste trực tiếp từ Excel")
+    
+    paste_text = st.text_area(
+        "Paste dữ liệu (Ctrl + V)",
+        height=200,
     )
-
+    
+    if st.button("🔄 Chuẩn hóa dữ liệu"):
+        df_raw = parse_paste_to_df(paste_text)
+    
+        if df_raw is None:
+            st.error("Không đọc được dữ liệu")
+        else:
+            df_std = map_columns(df_raw)
+            df_std.insert(0, "TT", range(1, len(df_std) + 1))
+            st.session_state["est_table"] = df_std
+    
+    if "est_table" in st.session_state:
+        st.subheader("📊 Bảng chuẩn hóa")
+    
+        edited_df = st.data_editor(
+            st.session_state["est_table"],
+            num_rows="dynamic",
+            use_container_width=True
+        )
+    
+        edited_df["TT"] = range(1, len(edited_df) + 1)
+        st.session_state["est_table"] = edited_df
     match_threshold = st.session_state.get("match_threshold", 70)
     w_size = st.session_state.get("weight_size", 0.45)
     w_cores = st.session_state.get("weight_cores", 0.25)
@@ -880,32 +989,39 @@ def page_estimation():
         run_matching = st.button("Match now")
 
     if run_matching:
-        if estimation_file is None:
-            st.error("Please upload an estimation file first.")
+        if estimation_file is None and "est_table" not in st.session_state:
+    st.error("Please upload or paste estimation first.")
         elif not price_list_files:
             st.error("Please upload at least one price list first.")
         else:
             # read estimation
+            # -------------------------------
+        # INPUT: FILE OR PASTE
+        # -------------------------------
+        if estimation_file is not None:
             try:
                 est = pd.read_excel(estimation_file).dropna(how="all")
             except Exception as e:
                 st.error(f"Cannot read estimation file: {e}")
                 est = None
-
-            if est is not None:
-                est_cols = est.columns.tolist()
-                if len(est_cols) < 5:
-                    st.error(
-                        "Estimation file must have at least 5 columns (Model, Description, Spec, Unit, Quantity)."
-                    )
-                else:
-                    base_est = (
-                        est[est_cols[0]].fillna("")
-                        + " "
-                        + est[est_cols[1]].fillna("")
-                        + " "
-                        + est[est_cols[2]].fillna("")
-                    )
+        
+        elif "est_table" in st.session_state:
+            est = st.session_state["est_table"].copy()
+        
+            base_est = est["Mô tả"].fillna("")
+        
+            est["combined"] = base_est.apply(clean)
+            parsed_est = base_est.apply(parse_cable_spec)
+            est["main_key"] = parsed_est.apply(lambda d: d["main_key"])
+            est["aux_key"] = parsed_est.apply(lambda d: d["aux_key"])
+            est["materials"] = base_est.apply(extract_material_structure_tokens)
+            est["voltage"] = base_est.apply(extract_voltage)
+        
+            # giả lập est_cols giống file
+            est_cols = ["Model", "Mô tả", "Mô tả", "Đơn vị", "Số lượng"]
+        
+        else:
+            est = None
                     est["combined"] = base_est.apply(clean)
                     parsed_est = base_est.apply(parse_cable_spec)
                     est["main_key"] = parsed_est.apply(lambda d: d["main_key"])
