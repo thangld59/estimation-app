@@ -990,7 +990,7 @@ def page_estimation():
 
     if run_matching:
         if estimation_file is None and "est_table" not in st.session_state:
-    st.error("Please upload or paste estimation first.")
+        st.error("Please upload or paste estimation first.")
         elif not price_list_files:
             st.error("Please upload at least one price list first.")
         else:
