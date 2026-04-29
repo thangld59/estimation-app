@@ -999,155 +999,155 @@ def page_estimation():
         # INPUT: FILE OR PASTE
         # -------------------------------
            # --- PHẦN 1: XỬ LÝ FILE DỰ TOÁN (EST) ---
-        if estimation_file is not None:
-            try:
-                est = pd.read_excel(estimation_file).dropna(how="all")
-            except Exception as e:
-                st.error(f"Cannot read estimation file: {e}")
-                est = None
-        elif "est_table" in st.session_state:
-            est = st.session_state["est_table"].copy()
-        else:
-            est = None
-        
-        # Chỉ xử lý nếu est tồn tại dữ liệu
-        if est is not None:
-            base_est = est["Mô tả"].fillna("")
-            est["combined"] = base_est.apply(clean)
-            parsed_est = base_est.apply(parse_cable_spec)
-            est["main_key"] = parsed_est.apply(lambda d: d["main_key"])
-            est["aux_key"] = parsed_est.apply(lambda d: d["aux_key"])
-            est["materials"] = base_est.apply(extract_material_structure_tokens)
-            est["voltage"] = base_est.apply(extract_voltage)
-            # Giả lập est_cols
-            est_cols = ["Model", "Mô tả", "Mô tả", "Đơn vị", "Số lượng"]
-        
-            # --- PHẦN 2: ĐỌC DANH MỤC GIÁ (DB) ---
-            if selected_file == "All files":
-                frames = []
-                for f in price_list_files:
-                    try:
-                        df_pl = pd.read_excel(os.path.join(user_folder, f)).dropna(how="all")
-                        df_pl["source"] = f
-                        frames.append(df_pl)
-                    except Exception:
-                        continue
-                db = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-            else:
+            if estimation_file is not None:
                 try:
-                    db = pd.read_excel(os.path.join(user_folder, selected_file)).dropna(how="all")
-                    db["source"] = selected_file
+                    est = pd.read_excel(estimation_file).dropna(how="all")
                 except Exception as e:
-                    st.error(f"Cannot read price list: {e}")
-                    db = pd.DataFrame()
-        
-            # --- PHẦN 3: SO KHỚP (MATCHING) ---
-            if db.empty:
-                st.error("No rows found in price list file(s).")
+                    st.error(f"Cannot read estimation file: {e}")
+                    est = None
+            elif "est_table" in st.session_state:
+                est = st.session_state["est_table"].copy()
             else:
-                db_cols = db.columns.tolist()
-                if len(db_cols) < 6:
-                    st.error("Price list requires at least 6 columns.")
+                est = None
+            
+            # Chỉ xử lý nếu est tồn tại dữ liệu
+            if est is not None:
+                base_est = est["Mô tả"].fillna("")
+                est["combined"] = base_est.apply(clean)
+                parsed_est = base_est.apply(parse_cable_spec)
+                est["main_key"] = parsed_est.apply(lambda d: d["main_key"])
+                est["aux_key"] = parsed_est.apply(lambda d: d["aux_key"])
+                est["materials"] = base_est.apply(extract_material_structure_tokens)
+                est["voltage"] = base_est.apply(extract_voltage)
+                # Giả lập est_cols
+                est_cols = ["Model", "Mô tả", "Mô tả", "Đơn vị", "Số lượng"]
+            
+                # --- PHẦN 2: ĐỌC DANH MỤC GIÁ (DB) ---
+                if selected_file == "All files":
+                    frames = []
+                    for f in price_list_files:
+                        try:
+                            df_pl = pd.read_excel(os.path.join(user_folder, f)).dropna(how="all")
+                            df_pl["source"] = f
+                            frames.append(df_pl)
+                        except Exception:
+                            continue
+                    db = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
                 else:
-                    # Tiền xử lý DB
-                    base_db = (
-                        db[db_cols[0]].fillna("") + " " + 
-                        db[db_cols[1]].fillna("") + " " + 
-                        db[db_cols[2]].fillna("")
-                    )
-                    db["combined"] = base_db.apply(clean)
-                    parsed_db = base_db.apply(parse_cable_spec)
-                    db["main_key"] = parsed_db.apply(lambda d: d["main_key"])
-                    db["aux_key"] = parsed_db.apply(lambda d: d["aux_key"])
-                    db["materials"] = base_db.apply(extract_material_structure_tokens)
-                    db["voltage"] = base_db.apply(extract_voltage)
-        
-                    results = []
-                    for _, row in est.iterrows():
-                        query = row["combined"]
-                        q_main = row["main_key"]
-                        q_aux = row["aux_key"]
-                        q_mats = row["materials"]
-                        q_voltage = row["voltage"] # Lấy từ row hiện tại
-                        unit = row[est_cols[3]]
-                        qty_value = row[est_cols[4]]
-                        
-                        best = None
-                        best_score = -1.0
-        
-                        def score_row(r):
-                            try:
-                                r_main = r.get("main_key", "")
-                                r_aux = r.get("aux_key", "")
-                                r_mats = r.get("materials", [])
-                                r_voltage = r.get("voltage", None)
-                                # HARD RULE
-                                if q_voltage and r_voltage:
-                                    if r_voltage[1] < q_voltage[1]:
-                                        return 0
-                                return combined_match_score(
-                                    query, q_main, q_aux, q_mats, q_voltage,
-                                    r.get("combined", ""), r_main, r_aux, r_mats, r_voltage,
-                                    match_threshold, weights
-                                )
-                            except:
-                                return 0.0
-        
-                        # Các bước tìm kiếm (Top 1, Top 2, Top 3)
-                        c0 = db[db["main_key"] == q_main] if q_main else pd.DataFrame()
-                        if not c0.empty:
-                            c0 = c0.copy()
-                            c0["score"] = c0.apply(score_row, axis=1)
-                            top = c0.sort_values("score", ascending=False).head(1).reset_index(drop=True)
-                            if not top.empty and top.loc[0, "score"] >= match_threshold:
-                                best = top.loc[0]
-                                best_score = float(best["score"])
-        
-                        if best is None:
-                            c1 = db.copy()
-                            c1["score"] = c1.apply(score_row, axis=1)
-                            top2 = c1.sort_values("score", ascending=False).head(1).reset_index(drop=True)
-                            if not top2.empty and top2.loc[0, "score"] >= match_threshold:
-                                best = top2.loc[0]
-                                best_score = float(best["score"])
-        
-                        if best is None:
-                            c2 = db.copy()
-                            c2["score"] = c2["combined"].apply(lambda x: fuzz.token_set_ratio(query, x))
-                            top3 = c2.sort_values("score", ascending=False).head(1).reset_index(drop=True)
-                            if not top3.empty:
-                                best = top3.loc[0]
-        
-                        # Lưu kết quả
-                        if best is not None:
-                            matched_desc = best[db_cols[1]]
-                            matched_model = best[db_cols[0]]
-                            matched_spec = best[db_cols[2]]
-                            m_cost = pd.to_numeric(best[db_cols[4]], errors="coerce") or 0
-                            l_cost = pd.to_numeric(best[db_cols[5]], errors="coerce") or 0
-                        else:
-                            matched_desc = matched_model = matched_spec = ""
-                            m_cost = l_cost = 0
-        
-                        qty_num = pd.to_numeric(qty_value, errors="coerce") or 0
-                        results.append([
-                            matched_model, row[est_cols[1]], matched_desc, matched_spec,
-                            unit, qty_num, m_cost, l_cost, qty_num * m_cost, qty_num * l_cost,
-                            (qty_num * m_cost) + (qty_num * l_cost)
+                    try:
+                        db = pd.read_excel(os.path.join(user_folder, selected_file)).dropna(how="all")
+                        db["source"] = selected_file
+                    except Exception as e:
+                        st.error(f"Cannot read price list: {e}")
+                        db = pd.DataFrame()
+            
+                # --- PHẦN 3: SO KHỚP (MATCHING) ---
+                if db.empty:
+                    st.error("No rows found in price list file(s).")
+                else:
+                    db_cols = db.columns.tolist()
+                    if len(db_cols) < 6:
+                        st.error("Price list requires at least 6 columns.")
+                    else:
+                        # Tiền xử lý DB
+                        base_db = (
+                            db[db_cols[0]].fillna("") + " " + 
+                            db[db_cols[1]].fillna("") + " " + 
+                            db[db_cols[2]].fillna("")
+                        )
+                        db["combined"] = base_db.apply(clean)
+                        parsed_db = base_db.apply(parse_cable_spec)
+                        db["main_key"] = parsed_db.apply(lambda d: d["main_key"])
+                        db["aux_key"] = parsed_db.apply(lambda d: d["aux_key"])
+                        db["materials"] = base_db.apply(extract_material_structure_tokens)
+                        db["voltage"] = base_db.apply(extract_voltage)
+            
+                        results = []
+                        for _, row in est.iterrows():
+                            query = row["combined"]
+                            q_main = row["main_key"]
+                            q_aux = row["aux_key"]
+                            q_mats = row["materials"]
+                            q_voltage = row["voltage"] # Lấy từ row hiện tại
+                            unit = row[est_cols[3]]
+                            qty_value = row[est_cols[4]]
+                            
+                            best = None
+                            best_score = -1.0
+            
+                            def score_row(r):
+                                try:
+                                    r_main = r.get("main_key", "")
+                                    r_aux = r.get("aux_key", "")
+                                    r_mats = r.get("materials", [])
+                                    r_voltage = r.get("voltage", None)
+                                    # HARD RULE
+                                    if q_voltage and r_voltage:
+                                        if r_voltage[1] < q_voltage[1]:
+                                            return 0
+                                    return combined_match_score(
+                                        query, q_main, q_aux, q_mats, q_voltage,
+                                        r.get("combined", ""), r_main, r_aux, r_mats, r_voltage,
+                                        match_threshold, weights
+                                    )
+                                except:
+                                    return 0.0
+            
+                            # Các bước tìm kiếm (Top 1, Top 2, Top 3)
+                            c0 = db[db["main_key"] == q_main] if q_main else pd.DataFrame()
+                            if not c0.empty:
+                                c0 = c0.copy()
+                                c0["score"] = c0.apply(score_row, axis=1)
+                                top = c0.sort_values("score", ascending=False).head(1).reset_index(drop=True)
+                                if not top.empty and top.loc[0, "score"] >= match_threshold:
+                                    best = top.loc[0]
+                                    best_score = float(best["score"])
+            
+                            if best is None:
+                                c1 = db.copy()
+                                c1["score"] = c1.apply(score_row, axis=1)
+                                top2 = c1.sort_values("score", ascending=False).head(1).reset_index(drop=True)
+                                if not top2.empty and top2.loc[0, "score"] >= match_threshold:
+                                    best = top2.loc[0]
+                                    best_score = float(best["score"])
+            
+                            if best is None:
+                                c2 = db.copy()
+                                c2["score"] = c2["combined"].apply(lambda x: fuzz.token_set_ratio(query, x))
+                                top3 = c2.sort_values("score", ascending=False).head(1).reset_index(drop=True)
+                                if not top3.empty:
+                                    best = top3.loc[0]
+            
+                            # Lưu kết quả
+                            if best is not None:
+                                matched_desc = best[db_cols[1]]
+                                matched_model = best[db_cols[0]]
+                                matched_spec = best[db_cols[2]]
+                                m_cost = pd.to_numeric(best[db_cols[4]], errors="coerce") or 0
+                                l_cost = pd.to_numeric(best[db_cols[5]], errors="coerce") or 0
+                            else:
+                                matched_desc = matched_model = matched_spec = ""
+                                m_cost = l_cost = 0
+            
+                            qty_num = pd.to_numeric(qty_value, errors="coerce") or 0
+                            results.append([
+                                matched_model, row[est_cols[1]], matched_desc, matched_spec,
+                                unit, qty_num, m_cost, l_cost, qty_num * m_cost, qty_num * l_cost,
+                                (qty_num * m_cost) + (qty_num * l_cost)
+                            ])
+            
+                        # Kết xuất DataFrame
+                        result_df = pd.DataFrame(results, columns=[
+                            "Model", "Description (requested)", "Description (proposed)", "Specification",
+                            "Unit", "Quantity", "Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"
                         ])
-        
-                    # Kết xuất DataFrame
-                    result_df = pd.DataFrame(results, columns=[
-                        "Model", "Description (requested)", "Description (proposed)", "Specification",
-                        "Unit", "Quantity", "Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"
-                    ])
-                    
-                    grand_total = pd.to_numeric(result_df["Total"], errors="coerce").sum()
-                    result_df.loc[len(result_df.index)] = ([""] * 10 + [grand_total])
-                    
-                    st.session_state["last_match_df"] = result_df
-                    st.session_state["last_unmatched_df"] = result_df[result_df["Description (proposed)"] == ""]
-                    st.success("Matching completed.")
+                        
+                        grand_total = pd.to_numeric(result_df["Total"], errors="coerce").sum()
+                        result_df.loc[len(result_df.index)] = ([""] * 10 + [grand_total])
+                        
+                        st.session_state["last_match_df"] = result_df
+                        st.session_state["last_unmatched_df"] = result_df[result_df["Description (proposed)"] == ""]
+                        st.success("Matching completed.")
 
 
     # show last matching results (persistent while editing)
