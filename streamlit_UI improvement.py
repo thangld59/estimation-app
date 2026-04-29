@@ -1012,13 +1012,24 @@ def page_estimation():
             
             # Chỉ xử lý nếu est tồn tại dữ liệu
             if est is not None:
-                base_est = est["Mô tả"].fillna("")
-                est["combined"] = base_est.apply(clean)
-                parsed_est = base_est.apply(parse_cable_spec)
-                est["main_key"] = parsed_est.apply(lambda d: d["main_key"])
-                est["aux_key"] = parsed_est.apply(lambda d: d["aux_key"])
-                est["materials"] = base_est.apply(extract_material_structure_tokens)
-                est["voltage"] = base_est.apply(extract_voltage)
+                    # 1. Tự động tìm tên cột "Mô tả" chính xác trong file của bạn
+                all_cols = est.columns.tolist()
+                target_col = next((c for c in all_cols if c.strip().lower() in ["mô tả", "mo ta", "description"]), None)
+            
+                if target_col:
+                    # 2. Nếu tìm thấy cột, tiến hành xử lý như cũ
+                    base_est = est[target_col].fillna("")
+                    est["combined"] = base_est.apply(clean)
+                    parsed_est = base_est.apply(parse_cable_spec)
+                    est["main_key"] = parsed_est.apply(lambda d: d["main_key"])
+                    est["aux_key"] = parsed_est.apply(lambda d: d["aux_key"])
+                    est["materials"] = base_est.apply(extract_material_structure_tokens)
+                    est["voltage"] = base_est.apply(extract_voltage)
+                else:
+                    # 3. Nếu không tìm thấy, báo lỗi và dừng để không bị sập app
+                    st.error(f"Lỗi: Không tìm thấy cột 'Mô tả'. Các cột hiện có: {', '.join(all_cols)}")
+                    st.stop()
+
                 # Giả lập est_cols
                 est_cols = ["Model", "Mô tả", "Mô tả", "Đơn vị", "Số lượng"]
             
