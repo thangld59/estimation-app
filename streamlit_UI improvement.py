@@ -998,30 +998,30 @@ def page_estimation():
             # -------------------------------
         # INPUT: FILE OR PASTE
         # -------------------------------
-        if estimation_file is not None:
-            try:
-                est = pd.read_excel(estimation_file).dropna(how="all")
-            except Exception as e:
-                st.error(f"Cannot read estimation file: {e}")
+            if estimation_file is not None:
+                try:
+                    est = pd.read_excel(estimation_file).dropna(how="all")
+                except Exception as e:
+                    st.error(f"Cannot read estimation file: {e}")
+                    est = None
+            
+            elif "est_table" in st.session_state:
+                est = st.session_state["est_table"].copy()
+            
+                base_est = est["Mô tả"].fillna("")
+            
+                est["combined"] = base_est.apply(clean)
+                parsed_est = base_est.apply(parse_cable_spec)
+                est["main_key"] = parsed_est.apply(lambda d: d["main_key"])
+                est["aux_key"] = parsed_est.apply(lambda d: d["aux_key"])
+                est["materials"] = base_est.apply(extract_material_structure_tokens)
+                est["voltage"] = base_est.apply(extract_voltage)
+            
+                # giả lập est_cols giống file
+                est_cols = ["Model", "Mô tả", "Mô tả", "Đơn vị", "Số lượng"]
+            
+            else:
                 est = None
-        
-        elif "est_table" in st.session_state:
-            est = st.session_state["est_table"].copy()
-        
-            base_est = est["Mô tả"].fillna("")
-        
-            est["combined"] = base_est.apply(clean)
-            parsed_est = base_est.apply(parse_cable_spec)
-            est["main_key"] = parsed_est.apply(lambda d: d["main_key"])
-            est["aux_key"] = parsed_est.apply(lambda d: d["aux_key"])
-            est["materials"] = base_est.apply(extract_material_structure_tokens)
-            est["voltage"] = base_est.apply(extract_voltage)
-        
-            # giả lập est_cols giống file
-            est_cols = ["Model", "Mô tả", "Mô tả", "Đơn vị", "Số lượng"]
-        
-        else:
-            est = None
                     est["combined"] = base_est.apply(clean)
                     parsed_est = base_est.apply(parse_cable_spec)
                     est["main_key"] = parsed_est.apply(lambda d: d["main_key"])
