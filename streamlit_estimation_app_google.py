@@ -286,6 +286,20 @@ def map_columns(df):
         col_scores[col] = score
 
     assigned = {}
+    # Sau đoạn assigned = {} trong ảnh của bạn
+    for target, col_name in assigned.items():
+        if col_name:
+            df = df.rename(columns={col_name: target})
+    
+    # Ép 3 cột chính về tên tiếng Anh để khớp với logic Matching của bạn
+    standard_map = {
+        "Model": "Model",
+        "Mô tả": "Description",
+        "Hãng": "Specification",  # Specification có thể là Brand (Hãng)
+        "Đơn vị": "Unit",
+        "Số lượng": "Quantity"
+    }
+    df = df.rename(columns=standard_map)
 
     for target in ["Mô tả", "Số lượng", "Model", "Hãng", "Đơn vị"]:
         best_col = None
