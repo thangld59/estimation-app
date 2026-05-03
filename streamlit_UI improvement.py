@@ -119,7 +119,89 @@ def clean(text: str) -> str:
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
+# ------------------------------
+# PARSE PIPELINE (NEW)
+# ------------------------------
 
+def is_index_column(series):
+    try:
+        nums = pd.to_numeric(series, errors="coerce")
+        if nums.isna().any():
+            return False
+
+        diffs = nums.diff().dropna()
+        return (diffs == 1).all()
+    except:
+        return False
+
+
+def remove_index_column(df):
+    for col in df.columns:
+        if is_index_column(df[col]):
+            df = df.drop(columns=[col])
+            break
+    return df
+
+
+def remove_empty_rows(df):
+    return df[~df.apply(lambda r: all(str(v).strip() == "" for v in r), axis=1)]
+
+
+def remove_group_header(df):
+    def is_header(row):
+        desc = str(row.get("Description", "")).strip()
+        qty = str(row.get("Quantity", "")).strip()
+        return desc == "" and qty == ""
+
+    return df[~df.apply(is_header, axis=1)]
+
+
+def normalize_description(text):
+    text = str(text).lower()
+
+    text = re.sub(r"sqmm|sqm|mm²", "mm2", text)
+    text = re.sub(r"(\d+)\s*[cC]\s*[x×]\s*(\d+)", r"\1x\2", text)
+    text = re.sub(r"(\d+)\s*mm2", r"\1mm2", text)
+
+    return text
+
+
+def validate_and_fix(df):
+
+    # fallback description
+    if df["Description"].eq("").all():
+        df["Description"] = df.iloc[:, 0]
+
+    # quantity numeric
+    df["Quantity"] = pd.to_numeric(df["Quantity"], errors="coerce")
+
+    return df
+
+
+def parse_pipeline(df):
+
+    # STEP 1: remove STT column
+    df = remove_index_column(df)
+
+    # STEP 2: map columns (giữ nguyên logic bạn đang có)
+    df = map_columns(df)
+
+    # STEP 3: remove empty rows
+    df = remove_empty_rows(df)
+
+    # STEP 4: remove group header
+    df = remove_group_header(df)
+
+    # STEP 5: normalize description
+    df["Description"] = df["Description"].apply(normalize_description)
+
+    # STEP 6: validate + fix
+    df = validate_and_fix(df)
+
+    # STEP 7: reset index
+    df = df.reset_index(drop=True)
+
+    return df
 # ------------------------------
 # Cable parsing
 # ------------------------------
@@ -956,7 +1038,8 @@ def page_estimation():
         if df_raw is None:
             st.error("Không đọc được dữ liệu")
         else:
-            df_std = map_columns(df_raw)
+            df_std = parse_pipeline(df_raw)
+    
             df_std.insert(0, "TT", range(1, len(df_std) + 1))
             st.session_state["est_table"] = df_std
     
