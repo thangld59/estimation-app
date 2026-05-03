@@ -257,11 +257,11 @@ def map_columns(df):
         values = df[col].astype(str)
 
         score = {
-            "Mô tả": 0,
-            "Số lượng": 0,
+            "Description": 0,
+            "Quantity": 0,
             "Model": 0,
-            "Hãng": 0,
-            "Đơn vị": 0,
+            "Specification": 0,
+            "Unit": 0,
         }
 
         for v in values.head(10):
@@ -269,25 +269,25 @@ def map_columns(df):
             v_low = v.lower()
 
             if is_number(v):
-                score["Số lượng"] += 2
+                score["Quantity"] += 2
 
             if is_cable(v):
-                score["Mô tả"] += 2
+                score["Description"] += 2
 
             if len(v.split()) <= 3:
                 score["Model"] += 1
 
             if any(b in v_low for b in ["cadisun", "cadivi", "ls", "lapp"]):
-                score["Hãng"] += 2
+                score["Specification"] += 2
 
             if v_low in ["m", "mtr", "pcs"]:
-                score["Đơn vị"] += 2
+                score["Unit"] += 2
 
         col_scores[col] = score
 
     assigned = {}
 
-    for target in ["Mô tả", "Số lượng", "Model", "Hãng", "Đơn vị"]:
+    for target in ["Description", "Quantity", "Model", "Specification", "Unit"]:
         best_col = None
         best_score = 0
 
@@ -301,7 +301,7 @@ def map_columns(df):
 
     result = pd.DataFrame()
 
-    for target in ["Model", "Mô tả", "Hãng", "Đơn vị", "Số lượng"]:
+    for target in ["Model", "Description", "Specification", "Unit", "Quantity"]:
         if target in assigned:
             result[target] = df[assigned[target]]
         else:
@@ -1012,9 +1012,9 @@ def page_estimation():
             
             # Chỉ xử lý nếu est tồn tại dữ liệu
             if est is not None:
-                    # 1. Tự động tìm tên cột "Mô tả" chính xác trong file của bạn
+                    # 1. Tự động tìm tên cột "Description" chính xác trong file của bạn
                 all_cols = est.columns.tolist()
-                target_col = next((c for c in all_cols if c.strip().lower() in ["mô tả", "mo ta", "description"]), None)
+                target_col = next((c for c in all_cols if c.strip().lower() in ["Description", "mo ta", "description"]), None)
             
                 if target_col:
                     # 2. Nếu tìm thấy cột, tiến hành xử lý như cũ
@@ -1027,11 +1027,11 @@ def page_estimation():
                     est["voltage"] = base_est.apply(extract_voltage)
                 else:
                     # 3. Nếu không tìm thấy, báo lỗi và dừng để không bị sập app
-                    st.error(f"Lỗi: Không tìm thấy cột 'Mô tả'. Các cột hiện có: {', '.join(all_cols)}")
+                    st.error(f"Lỗi: Không tìm thấy cột 'Description'. Các cột hiện có: {', '.join(all_cols)}")
                     st.stop()
 
                 # Giả lập est_cols
-                est_cols = ["Model", "Mô tả", "Mô tả", "Đơn vị", "Số lượng"]
+                est_cols = ["Model", "Description", "Description", "Unit", "Quantity"]
             
                 # --- PHẦN 2: ĐỌC DANH MỤC GIÁ (DB) ---
                 if selected_file == "All files":
