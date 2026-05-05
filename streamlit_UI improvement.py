@@ -336,7 +336,7 @@ def map_columns(df):
             return False
 
     def is_cable(text):
-    text = str(text).lower()
+        text = str(text).lower()
 
     return bool(
         re.search(
