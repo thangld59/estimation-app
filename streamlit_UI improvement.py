@@ -338,17 +338,17 @@ def map_columns(df):
     def is_cable(text):
         text = str(text).lower()
 
-    return bool(
-        re.search(
-            r"\d+x\d+"           # 4x6
-            r"|mm2"             # mm2
-            r"|sqmm|sqm"        # sqm
-            r"|cu|xlpe|pvc"     # vật liệu
-            r"|fr|dsta|data"    # lớp bảo vệ
-            r"|cáp|day|wire|cable",  # từ khóa
-            text
+        return bool(
+            re.search(
+                r"\d+x\d+"           # 4x6
+                r"|mm2"             # mm2
+                r"|sqmm|sqm"        # sqm
+                r"|cu|xlpe|pvc"     # vật liệu
+                r"|fr|dsta|data"    # lớp bảo vệ
+                r"|cáp|day|wire|cable",  # từ khóa
+                text
+            )
         )
-    )
 
     col_scores = {}
 
