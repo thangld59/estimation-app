@@ -180,10 +180,16 @@ def validate_and_fix(df):
 
 def parse_pipeline(df):
 
-    # STEP 1: remove STT column
+    # STEP 0: remove index column (STT / 1,2,3)
     df = remove_index_column(df)
-
-    # STEP 2: map columns (giữ nguyên logic bạn đang có)
+    
+    # STEP 0.5: remove rows kiểu A, B (header group)
+    df = df[df.apply(lambda r: not (
+        str(r.iloc[0]).strip().isalpha() and
+        all(str(v).strip() == "" for v in r.iloc[1:])
+    ), axis=1)]
+    
+    # STEP 1: map
     df = map_columns(df)
 
     # STEP 3: remove empty rows
@@ -200,7 +206,11 @@ def parse_pipeline(df):
 
     # STEP 7: reset index
     df = df.reset_index(drop=True)
-
+    # ---------------------------
+    # ADD CATEGORY (NEW)
+    # ---------------------------
+    df["Category"] = "cable"
+    
     return df
 # ------------------------------
 # Cable parsing
@@ -350,28 +360,33 @@ def map_columns(df):
             v = str(v)
             v_low = v.lower()
 
+            # Quantity
             if is_number(v):
                 score["Quantity"] += 2
 
+            # Description (PRIORITY)
             if is_cable(v):
-                score["Description"] += 2
+                score["Description"] += 3   # ⭐ tăng trọng số
 
-            if len(v.split()) <= 3:
+            # Unit
+            if v_low in ["m", "mtr", "pcs"]:
+                score["Unit"] += 3
+
+            # Model (short text only)
+            if len(v.split()) <= 2:
                 score["Model"] += 1
 
+            # Spec (brand)
             if any(b in v_low for b in ["cadisun", "cadivi", "ls", "lapp"]):
                 score["Specification"] += 2
-
-            if v_low in ["m", "mtr", "pcs"]:
-                score["Unit"] += 2
 
         col_scores[col] = score
 
     assigned = {}
 
-    for target in ["Description", "Quantity", "Model", "Specification", "Unit"]:
+    for target in ["Description", "Quantity", "Unit", "Specification", "Model"]:
         best_col = None
-        best_score = 0
+        best_score = -1
 
         for col, scores in col_scores.items():
             if scores[target] > best_score and col not in assigned.values():
@@ -383,11 +398,11 @@ def map_columns(df):
 
     result = pd.DataFrame()
 
-    for target in ["Model", "Description", "Specification", "Unit", "Quantity"]:
-        if target in assigned:
-            result[target] = df[assigned[target]]
-        else:
-            result[target] = ""
+    result["Model"] = df[assigned["Model"]] if "Model" in assigned else ""
+    result["Description"] = df[assigned["Description"]] if "Description" in assigned else ""
+    result["Specification"] = df[assigned["Specification"]] if "Specification" in assigned else ""
+    result["Unit"] = df[assigned["Unit"]] if "Unit" in assigned else ""
+    result["Quantity"] = df[assigned["Quantity"]] if "Quantity" in assigned else ""
 
     return result
 
@@ -1039,8 +1054,7 @@ def page_estimation():
             st.error("Không đọc được dữ liệu")
         else:
             df_std = parse_pipeline(df_raw)
-    
-            df_std.insert(0, "TT", range(1, len(df_std) + 1))
+      
             st.session_state["est_table"] = df_std
     
     if "est_table" in st.session_state:
