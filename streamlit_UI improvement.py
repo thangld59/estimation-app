@@ -206,10 +206,6 @@ def parse_pipeline(df):
 
     # STEP 7: reset index
     df = df.reset_index(drop=True)
-    # ---------------------------
-    # ADD CATEGORY (NEW)
-    # ---------------------------
-    df["Category"] = "cable"
     
     return df
 # ------------------------------
@@ -340,8 +336,19 @@ def map_columns(df):
             return False
 
     def is_cable(text):
-        text = str(text).lower()
-        return bool(re.search(r"\d+x\d+|\d+mm2|cu|xlpe|pvc", text))
+    text = str(text).lower()
+
+    return bool(
+        re.search(
+            r"\d+x\d+"           # 4x6
+            r"|mm2"             # mm2
+            r"|sqmm|sqm"        # sqm
+            r"|cu|xlpe|pvc"     # vật liệu
+            r"|fr|dsta|data"    # lớp bảo vệ
+            r"|cáp|day|wire|cable",  # từ khóa
+            text
+        )
+    )
 
     col_scores = {}
 
@@ -369,7 +376,7 @@ def map_columns(df):
                 score["Description"] += 3   # ⭐ tăng trọng số
 
             # Unit
-            if v_low in ["m", "mtr", "pcs"]:
+            if v_low in ["m", "mét", "cuộn", "chiếc", "cái", "cây", "mtr", "pcs"]:
                 score["Unit"] += 3
 
             # Model (short text only)
@@ -377,7 +384,7 @@ def map_columns(df):
                 score["Model"] += 1
 
             # Spec (brand)
-            if any(b in v_low for b in ["cadisun", "cadivi", "ls", "lapp"]):
+            if any(b in v_low for b in ["cadisun", "cadivi", "ls", "goldcup", "Taya","Tran Phu"]):
                 score["Specification"] += 2
 
         col_scores[col] = score
