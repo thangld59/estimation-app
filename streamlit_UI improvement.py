@@ -1050,7 +1050,7 @@ def page_estimation():
     st.markdown("### 📥 Hoặc paste trực tiếp từ Excel")
     
     paste_text = st.text_area(
-        "Paste dữ liệu (Ctrl + V)",
+        "Paste dữ liệu (Ctrl + V) - không copy cột thứ tự, và hàng tiêu đề",
         height=200,
     )
     
