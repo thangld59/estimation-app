@@ -96,7 +96,53 @@ def voltage_score(q_v, r_v):
         return 100
     else:
         return 80
+# ==========================================
+# CABLE MODEL MAP (PHASE 1)
+# ==========================================
 
+CABLE_MODEL_MAP = {
+
+    # --------------------------------------
+    # POWER CABLE
+    # --------------------------------------
+    "CXV/DSTA": "Cu/XLPE/PVC/DSTA/PVC",
+    "CXV/DATA": "Cu/XLPE/PVC/DATA/PVC",
+    "CVV/DSTA": "Cu/PVC/PVC/DSTA/PVC",
+    "CVV/DATA": "Cu/PVC/PVC/DATA/PVC",
+
+    "CXV": "Cu/XLPE/PVC",
+    "CVV": "Cu/PVC/PVC",
+    "CV": "Cu/PVC",
+
+    # --------------------------------------
+    # CIVIL / LIGHT
+    # --------------------------------------
+    "VCMD": "Cu/PVC mềm",
+    "VCM": "Cu/PVC mềm",
+    "VC": "Cu/PVC",
+
+    "DUPLEX": "Cu/PVC/PVC",
+    "TWIN": "Cu/PVC/PVC",
+
+    # --------------------------------------
+    # FIRE RESISTANT
+    # --------------------------------------
+    "FR-CXV": "Cu/FR-XLPE/PVC",
+    "FR-CVV": "Cu/FR-PVC/PVC",
+    "FR-CV": "Cu/FR-PVC",
+
+    "LSZH": "LSZH",
+    "LSHF": "LSHF",
+
+    # --------------------------------------
+    # ALUMINUM
+    # --------------------------------------
+    "AXV/DSTA": "Al/XLPE/PVC/DSTA/PVC",
+
+    "AXV": "Al/XLPE/PVC",
+    "AVV": "Al/PVC/PVC",
+    "AV": "Al/PVC",
+}
 # ==========================================
 # EXPAND CABLE MODEL
 # ==========================================
