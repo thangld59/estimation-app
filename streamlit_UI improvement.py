@@ -97,7 +97,36 @@ def voltage_score(q_v, r_v):
     else:
         return 80
 
+# ==========================================
+# EXPAND CABLE MODEL
+# ==========================================
 
+def expand_cable_model(text):
+
+    text = str(text)
+
+    # IMPORTANT:
+    # sort by longest first
+    keys = sorted(
+        CABLE_MODEL_MAP.keys(),
+        key=len,
+        reverse=True
+    )
+
+    for key in keys:
+
+        pattern = r"\b" + re.escape(key) + r"\b"
+
+        if re.search(pattern, text, flags=re.IGNORECASE):
+
+            text = re.sub(
+                pattern,
+                CABLE_MODEL_MAP[key],
+                text,
+                flags=re.IGNORECASE
+            )
+
+    return text
 # ------------------------------
 # Clean
 # ------------------------------
@@ -199,6 +228,10 @@ def parse_pipeline(df):
     df = remove_group_header(df)
 
     # STEP 5: normalize description
+    # STEP 5A: expand cable model
+    df["Description"] = df["Description"].apply(expand_cable_model)
+    
+    # STEP 5B: normalize description
     df["Description"] = df["Description"].apply(normalize_description)
 
     # STEP 6: validate + fix
