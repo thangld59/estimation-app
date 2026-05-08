@@ -272,8 +272,10 @@ def validate_and_fix(df):
         best_score = -1
 
     for col in df.columns:
-
-        score = (
+    
+        score = 0
+    
+        score += (
             df[col]
             .astype(str)
             .str.contains(
@@ -283,8 +285,9 @@ def validate_and_fix(df):
             )
             .sum()
         )
-
+    
         if score > best_score:
+    
             best_score = score
             best_col = col
 
@@ -458,11 +461,28 @@ def parse_paste_to_df(paste_text):
             return None
 
         # ALWAYS READ NO HEADER
-        df = pd.read_csv(
-            io.StringIO(paste_text),
-            sep="\t",
-            header=None
-        )
+        try:
+        
+            # FIRST TRY TAB
+            df = pd.read_csv(
+                io.StringIO(paste_text),
+                sep="\t",
+                header=None
+            )
+        
+            # if only 1 column -> try spaces
+            if df.shape[1] == 1:
+        
+                df = pd.read_csv(
+                    io.StringIO(paste_text),
+                    sep=r"\s{2,}|\t",
+                    engine="python",
+                    header=None
+                )
+        
+        except:
+        
+            return None
 
         # detect header
         header_keywords = [
