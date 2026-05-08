@@ -1260,6 +1260,7 @@ if "Category" in st.session_state["est_table"].columns:
         st.session_state["est_table"]["Category"].values
     )
 
+
 st.session_state["est_table"] = edited_df
 match_threshold = st.session_state.get("match_threshold", 70)
 w_size = st.session_state.get("weight_size", 0.45)
@@ -1275,8 +1276,8 @@ weights = {
 }
 
 col_match_btn, _ = st.columns([1, 3])
-    with col_match_btn:
-        run_matching = st.button("Match now")
+with col_match_btn:
+    run_matching = st.button("Match now")
 
     if run_matching:
         if estimation_file is None and "est_table" not in st.session_state:
