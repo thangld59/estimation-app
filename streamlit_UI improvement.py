@@ -1261,20 +1261,20 @@ if "Category" in st.session_state["est_table"].columns:
     )
 
 st.session_state["est_table"] = edited_df
-    match_threshold = st.session_state.get("match_threshold", 70)
-    w_size = st.session_state.get("weight_size", 0.45)
-    w_cores = st.session_state.get("weight_cores", 0.25)
-    w_material = st.session_state.get("weight_material", 0.30)
-    total_w = w_size + w_cores + w_material
-    if total_w <= 0:
-        total_w = 1.0
-    weights = {
-        "size": w_size / total_w,
-        "cores": w_cores / total_w,
-        "material": w_material / total_w,
-    }
+match_threshold = st.session_state.get("match_threshold", 70)
+w_size = st.session_state.get("weight_size", 0.45)
+w_cores = st.session_state.get("weight_cores", 0.25)
+w_material = st.session_state.get("weight_material", 0.30)
+total_w = w_size + w_cores + w_material
+if total_w <= 0:
+    total_w = 1.0
+weights = {
+    "size": w_size / total_w,
+    "cores": w_cores / total_w,
+    "material": w_material / total_w,
+}
 
-    col_match_btn, _ = st.columns([1, 3])
+col_match_btn, _ = st.columns([1, 3])
     with col_match_btn:
         run_matching = st.button("Match now")
 
