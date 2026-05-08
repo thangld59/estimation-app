@@ -262,40 +262,47 @@ def normalize_description(text):
 
     return text
 
-
 def validate_and_fix(df):
 
-    # fallback description
-    if df["Description"].eq("").all():
+    # ---------------------------------
+    # FIX DESCRIPTION IF EMPTY
+    # ---------------------------------
+    if df["Description"].astype(str).str.strip().eq("").all():
 
         best_col = None
         best_score = -1
 
-    for col in df.columns:
-    
-        score = 0
-    
-        score += (
-            df[col]
-            .astype(str)
-            .str.contains(
-                r"mm2|cu|xlpe|pvc|cv|cxv|cáp|cable",
-                case=False,
-                regex=True
+        for col in df.columns:
+
+            score = (
+                df[col]
+                .astype(str)
+                .str.contains(
+                    r"mm2|cu|xlpe|pvc|cv|cxv|cáp|cable",
+                    case=False,
+                    regex=True
+                )
+                .sum()
             )
-            .sum()
+
+            if score > best_score:
+
+                best_score = score
+                best_col = col
+
+        if best_col is not None:
+
+            df["Description"] = df[best_col]
+
+    # ---------------------------------
+    # FIX QUANTITY
+    # ---------------------------------
+    if "Quantity" in df.columns:
+
+        df["Quantity"] = pd.to_numeric(
+            df["Quantity"],
+            errors="coerce"
         )
-    
-        if score > best_score:
-    
-            best_score = score
-            best_col = col
-
-    if best_col is not None:
-        df["Description"] = df[best_col]
-
-    # quantity numeric
-    df["Quantity"] = pd.to_numeric(df["Quantity"], errors="coerce")
 
     return df
 
