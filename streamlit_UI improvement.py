@@ -396,11 +396,85 @@ def material_structure_score(query_tokens, target_tokens):
 # PASTE EXCEL PARSE
 # ------------------------------
 def parse_paste_to_df(paste_text):
+
     try:
         import io
-        df = pd.read_csv(io.StringIO(paste_text), sep="\t")
+
+        # ALWAYS read without header
+        df = pd.read_csv(
+            io.StringIO(paste_text),
+            sep="\t",
+            header=None
+        )
+
+        # ======================================
+        # HEADER DETECTION
+        # ======================================
+
+        header_keywords = [
+
+            "model",
+            "description",
+            "specification",
+            "brand",
+            "manufacturer",
+            "hãng",
+            "hãng sx",
+            "sản xuất",
+            "xuất xứ",
+            "origin",
+            "unit",
+            "đơn vị",
+            "quantity",
+            "qty",
+            "sl",
+            "số lượng",
+            "mô tả",
+        ]
+
+        first_row = (
+            df.iloc[0]
+            .astype(str)
+            .str.lower()
+            .tolist()
+        )
+
+        header_score = 0
+
+        for cell in first_row:
+
+            for keyword in header_keywords:
+
+                if keyword in cell:
+                    header_score += 1
+
+        # ======================================
+        # CASE 1: HAS HEADER
+        # ======================================
+
+        if header_score >= 2:
+
+            df.columns = df.iloc[0]
+
+            df = df[1:]
+
+            df.reset_index(drop=True, inplace=True)
+
+        # ======================================
+        # CASE 2: NO HEADER
+        # ======================================
+
+        else:
+
+            df.columns = [
+                f"col_{i}"
+                for i in range(df.shape[1])
+            ]
+
         return df
+
     except:
+
         return None
 
 
@@ -1129,7 +1203,7 @@ def page_estimation():
     st.markdown("### 📥 Hoặc paste trực tiếp từ Excel")
     
     paste_text = st.text_area(
-        "Paste dữ liệu (Ctrl + V) - không copy cột thứ tự, và hàng tiêu đề",
+        "Paste dữ liệu (Ctrl + V) - không copy cột thứ tự, và để cột trống",
         height=200,
     )
     
@@ -1143,17 +1217,50 @@ def page_estimation():
       
             st.session_state["est_table"] = df_std
     
-    if "est_table" in st.session_state:
-        st.subheader("📊 Bảng chuẩn hóa")
-    
-        edited_df = st.data_editor(
-            st.session_state["est_table"],
-            num_rows="dynamic",
-            use_container_width=True
-        )
-    
-        edited_df["TT"] = range(1, len(edited_df) + 1)
-        st.session_state["est_table"] = edited_df
+# ==========================================
+# DEFAULT EMPTY TABLE
+# ==========================================
+
+if "est_table" not in st.session_state:
+
+    st.session_state["est_table"] = pd.DataFrame(
+        {
+            "Model": [""] * 5,
+            "Description": [""] * 5,
+            "Specification": [""] * 5,
+            "Unit": [""] * 5,
+            "Quantity": [""] * 5,
+        }
+    )
+
+# ==========================================
+# DISPLAY TABLE
+# ==========================================
+
+st.subheader("📊 Bảng chuẩn hóa dữ liệu")
+
+display_df = st.session_state["est_table"].copy()
+
+# hide Category if exists
+display_df = display_df.drop(
+    columns=["Category"],
+    errors="ignore"
+)
+
+edited_df = st.data_editor(
+    display_df,
+    num_rows="dynamic",
+    use_container_width=True,
+)
+
+# restore category
+if "Category" in st.session_state["est_table"].columns:
+
+    edited_df["Category"] = (
+        st.session_state["est_table"]["Category"].values
+    )
+
+st.session_state["est_table"] = edited_df
     match_threshold = st.session_state.get("match_threshold", 70)
     w_size = st.session_state.get("weight_size", 0.45)
     w_cores = st.session_state.get("weight_cores", 0.25)
