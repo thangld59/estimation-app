@@ -221,15 +221,37 @@ def remove_index_column(df):
 def remove_empty_rows(df):
     return df[~df.apply(lambda r: all(str(v).strip() == "" for v in r), axis=1)]
 
-
 def remove_group_header(df):
-    def is_header(row):
-        desc = str(row.get("Description", "")).strip()
-        qty = str(row.get("Quantity", "")).strip()
-        return desc == "" and qty == ""
 
-    return df[~df.apply(is_header, axis=1)]
+    def is_group_header(row):
 
+        values = [
+            str(v).strip()
+            for v in row.values
+        ]
+
+        non_empty = [
+            v
+            for v in values
+            if v != ""
+        ]
+
+        # CASE:
+        # A
+        # B
+        # C
+        if len(non_empty) == 1:
+
+            token = non_empty[0]
+
+            if token.isalpha() and len(token) <= 3:
+                return True
+
+        return False
+
+    return df[
+        ~df.apply(is_group_header, axis=1)
+    ]
 
 def normalize_description(text):
     text = str(text).lower()
@@ -245,7 +267,29 @@ def validate_and_fix(df):
 
     # fallback description
     if df["Description"].eq("").all():
-        df["Description"] = df.iloc[:, 0]
+
+    best_col = None
+    best_score = -1
+
+    for col in df.columns:
+
+        score = (
+            df[col]
+            .astype(str)
+            .str.contains(
+                r"mm2|cu|xlpe|pvc|cv|cxv|cáp|cable",
+                case=False,
+                regex=True
+            )
+            .sum()
+        )
+
+        if score > best_score:
+            best_score = score
+            best_col = col
+
+    if best_col is not None:
+        df["Description"] = df[best_col]
 
     # quantity numeric
     df["Quantity"] = pd.to_numeric(df["Quantity"], errors="coerce")
@@ -526,7 +570,17 @@ def map_columns(df):
                 score["Unit"] += 3
 
             # Model (short text only)
-            if len(v.split()) <= 2:
+            if (
+                len(v.split()) <= 2
+                and not is_number(v)
+                and v_low not in [
+                    "m",
+                    "mét",
+                    "cuộn",
+                    "pcs",
+                    "cái",
+                ]
+            ):
                 score["Model"] += 1
 
             # Spec (brand)
