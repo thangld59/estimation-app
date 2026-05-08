@@ -268,8 +268,8 @@ def validate_and_fix(df):
     # fallback description
     if df["Description"].eq("").all():
 
-    best_col = None
-    best_score = -1
+        best_col = None
+        best_score = -1
 
     for col in df.columns:
 
