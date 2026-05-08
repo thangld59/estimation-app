@@ -398,38 +398,40 @@ def material_structure_score(query_tokens, target_tokens):
 def parse_paste_to_df(paste_text):
 
     try:
+
         import io
 
-        # ALWAYS read without header
+        # remove empty lines
+        paste_text = "\n".join(
+            [
+                line
+                for line in paste_text.splitlines()
+                if line.strip()
+            ]
+        )
+
+        if not paste_text.strip():
+            return None
+
+        # ALWAYS READ NO HEADER
         df = pd.read_csv(
             io.StringIO(paste_text),
             sep="\t",
             header=None
         )
 
-        # ======================================
-        # HEADER DETECTION
-        # ======================================
-
+        # detect header
         header_keywords = [
-
             "model",
             "description",
             "specification",
-            "brand",
-            "manufacturer",
-            "hãng",
-            "hãng sx",
-            "sản xuất",
-            "xuất xứ",
-            "origin",
-            "unit",
-            "đơn vị",
             "quantity",
             "qty",
-            "sl",
-            "số lượng",
+            "unit",
+            "hãng",
             "mô tả",
+            "số lượng",
+            "đơn vị",
         ]
 
         first_row = (
@@ -439,20 +441,13 @@ def parse_paste_to_df(paste_text):
             .tolist()
         )
 
-        header_score = 0
+        has_header = any(
+            any(k in cell for k in header_keywords)
+            for cell in first_row
+        )
 
-        for cell in first_row:
-
-            for keyword in header_keywords:
-
-                if keyword in cell:
-                    header_score += 1
-
-        # ======================================
-        # CASE 1: HAS HEADER
-        # ======================================
-
-        if header_score >= 2:
+        # CASE 1 — HAS HEADER
+        if has_header:
 
             df.columns = df.iloc[0]
 
@@ -460,10 +455,7 @@ def parse_paste_to_df(paste_text):
 
             df.reset_index(drop=True, inplace=True)
 
-        # ======================================
-        # CASE 2: NO HEADER
-        # ======================================
-
+        # CASE 2 — NO HEADER
         else:
 
             df.columns = [
@@ -473,10 +465,11 @@ def parse_paste_to_df(paste_text):
 
         return df
 
-    except:
+    except Exception as e:
+
+        print(e)
 
         return None
-
 
 def map_columns(df):
     import re
@@ -1451,258 +1444,258 @@ def page_estimation():
                         st.success("Matching completed.")
     
     
-        # show last matching results (persistent while editing)
-        last_df = st.session_state.get("last_match_df")
-        last_unmatched = st.session_state.get("last_unmatched_df")
-    
-        if last_df is not None:
-            st.markdown("#### Matched Estimation (latest)")
-            display_df = last_df.copy()
-            display_df["Quantity"] = pd.to_numeric(
-                display_df["Quantity"], errors="coerce"
-            ).fillna(0).astype(int)
-            for col in [
-                "Material Cost",
-                "Labour Cost",
-                "Amount Material",
-                "Amount Labour",
-                "Total",
-            ]:
-                display_df[col] = pd.to_numeric(
-                    display_df[col], errors="coerce"
-                ).fillna(0).map("{:,.0f}".format)
-            st.dataframe(display_df, use_container_width=True)
-    
-            # download matching file (.xlsx)
-            buffer = BytesIO()
-            with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-                last_df.to_excel(
-                    writer, index=False, sheet_name="Matched Results"
+    # show last matching results (persistent while editing)
+    last_df = st.session_state.get("last_match_df")
+    last_unmatched = st.session_state.get("last_unmatched_df")
+
+    if last_df is not None:
+        st.markdown("#### Matched Estimation (latest)")
+        display_df = last_df.copy()
+        display_df["Quantity"] = pd.to_numeric(
+            display_df["Quantity"], errors="coerce"
+        ).fillna(0).astype(int)
+        for col in [
+            "Material Cost",
+            "Labour Cost",
+            "Amount Material",
+            "Amount Labour",
+            "Total",
+        ]:
+            display_df[col] = pd.to_numeric(
+                display_df[col], errors="coerce"
+            ).fillna(0).map("{:,.0f}".format)
+        st.dataframe(display_df, use_container_width=True)
+
+        # download matching file (.xlsx)
+        buffer = BytesIO()
+        with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+            last_df.to_excel(
+                writer, index=False, sheet_name="Matched Results"
+            )
+            if last_unmatched is not None and not last_unmatched.empty:
+                last_unmatched.to_excel(
+                    writer,
+                    index=False,
+                    sheet_name="Unmatched Items",
                 )
-                if last_unmatched is not None and not last_unmatched.empty:
-                    last_unmatched.to_excel(
-                        writer,
-                        index=False,
-                        sheet_name="Unmatched Items",
-                    )
-            st.download_button(
-                "Download matching file (.xlsx)",
-                buffer.getvalue(),
-                file_name="Estimation_Result_BuildWise.xlsx",
+        st.download_button(
+            "Download matching file (.xlsx)",
+            buffer.getvalue(),
+            file_name="Estimation_Result_BuildWise.xlsx",
+        )
+    else:
+        st.info("No matching result yet. Upload files and click 'Match now'.")
+
+    st.markdown("---")
+    st.subheader("4. Quotation generation")
+
+    # customers
+    customers = load_customers_for(username)
+    cust_labels = ["--No customer--"] + [
+        f"{c.get('name', '')} ({c.get('company', '')})" for c in customers
+    ]
+    col_c1, col_c2 = st.columns([2, 2])
+    with col_c1:
+        selected_cust_label = st.selectbox(
+            "Select a customer", cust_labels, index=0
+        )
+
+    active_customer = None
+    if selected_cust_label != "--No customer--":
+        idx = cust_labels.index(selected_cust_label) - 1
+        active_customer = customers[idx]
+        st.markdown("*Selected customer:*")
+        # display as table
+        cust_df = pd.DataFrame(
+            {
+                "Field": [
+                    "Name",
+                    "Company",
+                    "Address",
+                    "Phone",
+                    "Email",
+                    "Notes",
+                ],
+                "Value": [
+                    active_customer.get("name", ""),
+                    active_customer.get("company", ""),
+                    active_customer.get("address", ""),
+                    active_customer.get("phone", ""),
+                    active_customer.get("email", ""),
+                    active_customer.get("notes", ""),
+                ],
+            }
+        )
+        st.table(cust_df)
+    else:
+        st.info("No customer selected yet.")
+
+    # Edit/save selected customer (fixed)
+    if active_customer is not None:
+        with st.expander("Edit selected customer"):
+            with st.form("edit_selected_customer_main"):
+                e_name = st.text_input(
+                    "Customer name", value=active_customer.get("name", "")
+                )
+                e_company = st.text_input(
+                    "Company", value=active_customer.get("company", "")
+                )
+                e_address = st.text_input(
+                    "Address", value=active_customer.get("address", "")
+                )
+                e_phone = st.text_input(
+                    "Phone", value=active_customer.get("phone", "")
+                )
+                e_email = st.text_input(
+                    "Email", value=active_customer.get("email", "")
+                )
+                e_notes = st.text_area(
+                    "Notes", value=active_customer.get("notes", "")
+                )
+                submitted = st.form_submit_button("Save customer")
+                if submitted:
+                    cust_id = active_customer.get("id")
+                    for i, c in enumerate(customers):
+                        if c.get("id") == cust_id:
+                            customers[i].update(
+                                {
+                                    "name": e_name.strip(),
+                                    "company": e_company.strip(),
+                                    "address": e_address.strip(),
+                                    "phone": e_phone.strip(),
+                                    "email": e_email.strip(),
+                                    "notes": e_notes.strip(),
+                                    "updated_at": datetime.now().isoformat(),
+                                }
+                            )
+                            break
+                    save_customers_for(username, customers)
+                    st.success("Customer updated.")
+                    st.experimental_rerun()
+
+    # Trading terms
+    st.markdown("#### Trading terms / Điều khoản thương mại")
+    terms = load_trading_terms(username)
+    with st.form("trading_terms_form_main"):
+        payment = st.text_area(
+            "Payment / Thanh toán",
+            value=terms.get("payment", ""),
+            height=80,
+        )
+        delivery = st.text_input(
+            "Delivery schedule / Tiến độ",
+            value=terms.get("delivery", ""),
+        )
+        trans_fee = st.text_input(
+            "Transportation fee / Phí vận chuyển",
+            value=terms.get("transportation_fee", ""),
+        )
+        validity = st.text_input(
+            "Quotation validity / Hiệu lực báo giá",
+            value=terms.get("validity", ""),
+        )
+        save_terms_btn = st.form_submit_button("Save trading terms")
+        if save_terms_btn:
+            new_terms = {
+                "payment": payment,
+                "delivery": delivery,
+                "transportation_fee": trans_fee,
+                "validity": validity,
+            }
+            save_trading_terms(username, new_terms)
+            st.success("Trading terms saved.")
+            terms = new_terms
+
+    col_g1, col_g2 = st.columns([1, 3])
+    with col_g1:
+        generate_q = st.button("Generate quotation")
+
+    if generate_q:
+        if active_customer is None:
+            st.error("Please select a customer before generating quotation.")
+        elif st.session_state.get("last_match_df") is None:
+            st.error("Please run matching first.")
+        elif not os.path.exists(TEMPLATE_FILE):
+            st.error(
+                f"Quotation template '{TEMPLATE_FILE}' not found. Please upload it to the same folder as this app."
             )
         else:
-            st.info("No matching result yet. Upload files and click 'Match now'.")
-    
-        st.markdown("---")
-        st.subheader("4. Quotation generation")
-    
-        # customers
-        customers = load_customers_for(username)
-        cust_labels = ["--No customer--"] + [
-            f"{c.get('name', '')} ({c.get('company', '')})" for c in customers
-        ]
-        col_c1, col_c2 = st.columns([2, 2])
-        with col_c1:
-            selected_cust_label = st.selectbox(
-                "Select a customer", cust_labels, index=0
-            )
-    
-        active_customer = None
-        if selected_cust_label != "--No customer--":
-            idx = cust_labels.index(selected_cust_label) - 1
-            active_customer = customers[idx]
-            st.markdown("*Selected customer:*")
-            # display as table
-            cust_df = pd.DataFrame(
-                {
-                    "Field": [
-                        "Name",
-                        "Company",
-                        "Address",
-                        "Phone",
-                        "Email",
-                        "Notes",
-                    ],
-                    "Value": [
-                        active_customer.get("name", ""),
-                        active_customer.get("company", ""),
-                        active_customer.get("address", ""),
-                        active_customer.get("phone", ""),
-                        active_customer.get("email", ""),
-                        active_customer.get("notes", ""),
-                    ],
-                }
-            )
-            st.table(cust_df)
-        else:
-            st.info("No customer selected yet.")
-    
-        # Edit/save selected customer (fixed)
-        if active_customer is not None:
-            with st.expander("Edit selected customer"):
-                with st.form("edit_selected_customer_main"):
-                    e_name = st.text_input(
-                        "Customer name", value=active_customer.get("name", "")
-                    )
-                    e_company = st.text_input(
-                        "Company", value=active_customer.get("company", "")
-                    )
-                    e_address = st.text_input(
-                        "Address", value=active_customer.get("address", "")
-                    )
-                    e_phone = st.text_input(
-                        "Phone", value=active_customer.get("phone", "")
-                    )
-                    e_email = st.text_input(
-                        "Email", value=active_customer.get("email", "")
-                    )
-                    e_notes = st.text_area(
-                        "Notes", value=active_customer.get("notes", "")
-                    )
-                    submitted = st.form_submit_button("Save customer")
-                    if submitted:
-                        cust_id = active_customer.get("id")
-                        for i, c in enumerate(customers):
-                            if c.get("id") == cust_id:
-                                customers[i].update(
-                                    {
-                                        "name": e_name.strip(),
-                                        "company": e_company.strip(),
-                                        "address": e_address.strip(),
-                                        "phone": e_phone.strip(),
-                                        "email": e_email.strip(),
-                                        "notes": e_notes.strip(),
-                                        "updated_at": datetime.now().isoformat(),
-                                    }
-                                )
-                                break
-                        save_customers_for(username, customers)
-                        st.success("Customer updated.")
-                        st.experimental_rerun()
-    
-        # Trading terms
-        st.markdown("#### Trading terms / Điều khoản thương mại")
-        terms = load_trading_terms(username)
-        with st.form("trading_terms_form_main"):
-            payment = st.text_area(
-                "Payment / Thanh toán",
-                value=terms.get("payment", ""),
-                height=80,
-            )
-            delivery = st.text_input(
-                "Delivery schedule / Tiến độ",
-                value=terms.get("delivery", ""),
-            )
-            trans_fee = st.text_input(
-                "Transportation fee / Phí vận chuyển",
-                value=terms.get("transportation_fee", ""),
-            )
-            validity = st.text_input(
-                "Quotation validity / Hiệu lực báo giá",
-                value=terms.get("validity", ""),
-            )
-            save_terms_btn = st.form_submit_button("Save trading terms")
-            if save_terms_btn:
-                new_terms = {
-                    "payment": payment,
-                    "delivery": delivery,
-                    "transportation_fee": trans_fee,
-                    "validity": validity,
-                }
-                save_trading_terms(username, new_terms)
-                st.success("Trading terms saved.")
-                terms = new_terms
-    
-        col_g1, col_g2 = st.columns([1, 3])
-        with col_g1:
-            generate_q = st.button("Generate quotation")
-    
-        if generate_q:
-            if active_customer is None:
-                st.error("Please select a customer before generating quotation.")
-            elif st.session_state.get("last_match_df") is None:
-                st.error("Please run matching first.")
-            elif not os.path.exists(TEMPLATE_FILE):
-                st.error(
-                    f"Quotation template '{TEMPLATE_FILE}' not found. Please upload it to the same folder as this app."
-                )
-            else:
-                # load company info
-                comp_file = os.path.join(user_folder, "company.json")
-                company_info = {}
-                if os.path.exists(comp_file):
-                    try:
-                        with open(comp_file, "r", encoding="utf-8") as f:
-                            company_info = json.load(f)
-                    except Exception:
-                        company_info = {}
-    
-                result_df = st.session_state["last_match_df"].copy()
-                current_terms = {
-                    "payment": payment,
-                    "delivery": delivery,
-                    "transportation_fee": trans_fee,
-                    "validity": validity,
-                }
-                save_trading_terms(username, current_terms)
-    
+            # load company info
+            comp_file = os.path.join(user_folder, "company.json")
+            company_info = {}
+            if os.path.exists(comp_file):
                 try:
-                    q_bytes = generate_quotation_from_template(
-                        TEMPLATE_FILE,
-                        result_df,
-                        company_info,
-                        active_customer,
-                        current_terms,
-                    )
-                    q_filename = make_quotation_filename()
-                    st.session_state["quotation_bytes"] = q_bytes
-                    st.session_state["quotation_filename"] = q_filename
-                    st.success("Quotation generated using template.")
-                except FileNotFoundError as e:
-                    st.error(str(e))
-                except Exception as e:
-                    st.error(f"Error generating quotation: {e}")
-    
-        # Quotation preview + Download + Save
-        if st.session_state.get("quotation_bytes") is not None:
-            st.markdown("#### Quotation preview (matched items)")
-            # preview from last_match_df
-            prev_df = st.session_state["last_match_df"].copy()
-            display_prev = prev_df.copy()
-            display_prev["Quantity"] = pd.to_numeric(
-                display_prev["Quantity"], errors="coerce"
-            ).fillna(0).astype(int)
-            for col in [
-                "Material Cost",
-                "Labour Cost",
-                "Amount Material",
-                "Amount Labour",
-                "Total",
-            ]:
-                display_prev[col] = pd.to_numeric(
-                    display_prev[col], errors="coerce"
-                ).fillna(0).map("{:,.0f}".format)
-            st.dataframe(display_prev, use_container_width=True)
-    
-            col_d1, col_d2 = st.columns([1, 1])
-            with col_d1:
-                st.download_button(
-                    "Download quotation (.xlsx)",
-                    st.session_state["quotation_bytes"],
-                    file_name=st.session_state["quotation_filename"],
+                    with open(comp_file, "r", encoding="utf-8") as f:
+                        company_info = json.load(f)
+                except Exception:
+                    company_info = {}
+
+            result_df = st.session_state["last_match_df"].copy()
+            current_terms = {
+                "payment": payment,
+                "delivery": delivery,
+                "transportation_fee": trans_fee,
+                "validity": validity,
+            }
+            save_trading_terms(username, current_terms)
+
+            try:
+                q_bytes = generate_quotation_from_template(
+                    TEMPLATE_FILE,
+                    result_df,
+                    company_info,
+                    active_customer,
+                    current_terms,
                 )
-            with col_d2:
-                if st.button("Save quotation"):
-                    q_folder = os.path.join(user_folder, "quotations")
-                    os.makedirs(q_folder, exist_ok=True)
-                    path = os.path.join(
-                        q_folder, st.session_state["quotation_filename"]
-                    )
-                    with open(path, "wb") as f:
-                        f.write(st.session_state["quotation_bytes"])
-                    st.success("Quotation saved to history.")
-        else:
-            st.info("Generate a quotation to enable preview, download, and save.")
+                q_filename = make_quotation_filename()
+                st.session_state["quotation_bytes"] = q_bytes
+                st.session_state["quotation_filename"] = q_filename
+                st.success("Quotation generated using template.")
+            except FileNotFoundError as e:
+                st.error(str(e))
+            except Exception as e:
+                st.error(f"Error generating quotation: {e}")
+
+    # Quotation preview + Download + Save
+    if st.session_state.get("quotation_bytes") is not None:
+        st.markdown("#### Quotation preview (matched items)")
+        # preview from last_match_df
+        prev_df = st.session_state["last_match_df"].copy()
+        display_prev = prev_df.copy()
+        display_prev["Quantity"] = pd.to_numeric(
+            display_prev["Quantity"], errors="coerce"
+        ).fillna(0).astype(int)
+        for col in [
+            "Material Cost",
+            "Labour Cost",
+            "Amount Material",
+            "Amount Labour",
+            "Total",
+        ]:
+            display_prev[col] = pd.to_numeric(
+                display_prev[col], errors="coerce"
+            ).fillna(0).map("{:,.0f}".format)
+        st.dataframe(display_prev, use_container_width=True)
+
+        col_d1, col_d2 = st.columns([1, 1])
+        with col_d1:
+            st.download_button(
+                "Download quotation (.xlsx)",
+                st.session_state["quotation_bytes"],
+                file_name=st.session_state["quotation_filename"],
+            )
+        with col_d2:
+            if st.button("Save quotation"):
+                q_folder = os.path.join(user_folder, "quotations")
+                os.makedirs(q_folder, exist_ok=True)
+                path = os.path.join(
+                    q_folder, st.session_state["quotation_filename"]
+                )
+                with open(path, "wb") as f:
+                    f.write(st.session_state["quotation_bytes"])
+                st.success("Quotation saved to history.")
+    else:
+        st.info("Generate a quotation to enable preview, download, and save.")
 
 # ------------------------------
 # Sidebar navigation + match settings
