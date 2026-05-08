@@ -1276,7 +1276,7 @@ weights = {
 }
 
 col_match_btn, _ = st.columns([1, 3])
-    with col_match_btn:
+with col_match_btn:
     run_matching = st.button("Match now")
 
     if run_matching:
