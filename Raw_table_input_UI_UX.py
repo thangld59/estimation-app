@@ -1281,33 +1281,7 @@ def page_estimation():
         height=200,
     )
         
-    if normalize_clicked:
-    
-        try:
-    
-            df_raw = st.session_state["raw_table"].copy()
-    
-            # remove fully empty rows
-            df_raw = df_raw.dropna(how="all")
-    
-            # rename to parser format
-            df_raw = df_raw.rename(
-                columns={
-                    "Brand": "Specification",
-                    "Qty": "Quantity",
-                }
-            )
-    
-            df_std = parse_pipeline(df_raw)
-    
-            st.session_state["est_table"] = df_std
-    
-            st.success("Chuẩn hóa dữ liệu thành công")
-    
-        except Exception as e:
-    
-            st.error(f"Lỗi chuẩn hóa dữ liệu: {e}")
-    
+  
     match_threshold = st.session_state.get("match_threshold", 70)
     w_size = st.session_state.get("weight_size", 0.45)
     w_cores = st.session_state.get("weight_cores", 0.25)
@@ -1390,7 +1364,32 @@ def page_estimation():
             "Chuẩn hóa dữ liệu ➜",
             use_container_width=True
         )
+        if normalize_clicked:
     
+        try:
+    
+            df_raw = st.session_state["raw_table"].copy()
+    
+            # remove fully empty rows
+            df_raw = df_raw.dropna(how="all")
+    
+            # rename to parser format
+            df_raw = df_raw.rename(
+                columns={
+                    "Brand": "Specification",
+                    "Qty": "Quantity",
+                }
+            )
+    
+            df_std = parse_pipeline(df_raw)
+    
+            st.session_state["est_table"] = df_std
+    
+            st.success("Chuẩn hóa dữ liệu thành công")
+    
+        except Exception as e:
+    
+            st.error(f"Lỗi chuẩn hóa dữ liệu: {e}")
     # ==========================================
     # NORMALIZED TABLE
     # ==========================================
