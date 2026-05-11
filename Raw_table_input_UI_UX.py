@@ -1280,16 +1280,33 @@ def page_estimation():
         "Paste dữ liệu (Ctrl + V) - không copy cột thứ tự, và để cột trống",
         height=200,
     )
+        
+    if normalize_clicked:
     
-    if st.button("🔄 Chuẩn hóa dữ liệu"):
-        df_raw = parse_paste_to_df(paste_text)
+        try:
     
-        if df_raw is None:
-            st.error("Không đọc được dữ liệu")
-        else:
+            df_raw = st.session_state["raw_table"].copy()
+    
+            # remove fully empty rows
+            df_raw = df_raw.dropna(how="all")
+    
+            # rename to parser format
+            df_raw = df_raw.rename(
+                columns={
+                    "Brand": "Specification",
+                    "Qty": "Quantity",
+                }
+            )
+    
             df_std = parse_pipeline(df_raw)
-      
+    
             st.session_state["est_table"] = df_std
+    
+            st.success("Chuẩn hóa dữ liệu thành công")
+    
+        except Exception as e:
+    
+            st.error(f"Lỗi chuẩn hóa dữ liệu: {e}")
     
     match_threshold = st.session_state.get("match_threshold", 70)
     w_size = st.session_state.get("weight_size", 0.45)
@@ -1303,6 +1320,21 @@ def page_estimation():
         "cores": w_cores / total_w,
         "material": w_material / total_w,
     }
+    # ==========================================
+    # DEFAULT RAW TABLE
+    # ==========================================
+    
+    if "raw_table" not in st.session_state:
+    
+        st.session_state["raw_table"] = pd.DataFrame(
+            {
+                "Model": [""] * 5,
+                "Description": [""] * 5,
+                "Brand": [""] * 5,
+                "Unit": [""] * 5,
+                "Qty": [""] * 5,
+            }
+        )
     # ==========================================
     # DEFAULT EMPTY TABLE
     # ==========================================
@@ -1320,34 +1352,76 @@ def page_estimation():
         )
     
     # ==========================================
-    # DISPLAY TABLE
+    # RAW + NORMALIZED TABLE LAYOUT
     # ==========================================
     
-    st.subheader("📊 Bảng chuẩn hóa dữ liệu")
+    col_raw, col_mid, col_norm = st.columns([5, 1, 5])
     
-    display_df = st.session_state["est_table"].copy()
+    # ==========================================
+    # RAW TABLE
+    # ==========================================
     
-    # hide Category if exists
-    display_df = display_df.drop(
-        columns=["Category"],
-        errors="ignore"
-    )
+    with col_raw:
     
-    edited_df = st.data_editor(
-        display_df,
-        num_rows="dynamic",
-        use_container_width=True,
-    )
+        st.subheader("📝 Dữ liệu chưa chuẩn hóa")
     
-    # restore category
-    if "Category" in st.session_state["est_table"].columns:
+        st.caption("Bạn có thể copy / paste hoặc nhập trực tiếp")
     
-        edited_df["Category"] = (
-            st.session_state["est_table"]["Category"].values
+        raw_df = st.data_editor(
+            st.session_state["raw_table"],
+            num_rows="dynamic",
+            use_container_width=True,
+            key="raw_editor",
         )
     
+        st.session_state["raw_table"] = raw_df
     
-    st.session_state["est_table"] = edited_df
+    # ==========================================
+    # NORMALIZE BUTTON
+    # ==========================================
+    
+    with col_mid:
+    
+        st.markdown("<br><br><br>", unsafe_allow_html=True)
+    
+        normalize_clicked = st.button(
+            "Chuẩn hóa dữ liệu ➜",
+            use_container_width=True
+        )
+    
+    # ==========================================
+    # NORMALIZED TABLE
+    # ==========================================
+    
+    with col_norm:
+    
+        st.subheader("📊 Dữ liệu sau chuẩn hóa")
+    
+        st.caption("Bạn có thể chỉnh sửa trực tiếp")
+    
+        display_df = st.session_state["est_table"].copy()
+    
+        display_df = display_df.drop(
+            columns=["Category"],
+            errors="ignore"
+        )
+    
+        edited_df = st.data_editor(
+            display_df,
+            num_rows="dynamic",
+            use_container_width=True,
+            key="normalized_editor",
+        )
+    
+        # restore category if exists
+        if "Category" in st.session_state["est_table"].columns:
+    
+            edited_df["Category"] = (
+                st.session_state["est_table"]["Category"].values
+            )
+    
+        st.session_state["est_table"] = edited_df
+ 
     col_match_btn, _ = st.columns([1, 3])
     with col_match_btn:
         run_matching = st.button("Match now")
