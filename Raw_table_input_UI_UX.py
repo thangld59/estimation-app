@@ -1380,6 +1380,8 @@ def page_estimation():
     # NORMALIZE BUTTON
     # ==========================================
     
+    normalize_clicked = False
+    
     with col_mid:
     
         st.markdown("<br><br><br>", unsafe_allow_html=True)
