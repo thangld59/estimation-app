@@ -1329,6 +1329,18 @@ def page_estimation():
     # RAW + NORMALIZED TABLE LAYOUT
     # ==========================================
     
+    # ==========================================
+    # TOP TOOLBAR
+    # ==========================================
+    
+    toolbar_col1, toolbar_col2, toolbar_col3 = st.columns([1,2,7])
+    
+    with toolbar_col1:
+    
+        normalize_clicked = st.button(
+            "🔄 Chuẩn hóa dữ liệu",
+            use_container_width=True
+        )
     col_raw, col_mid, col_norm = st.columns([5, 1, 5])
     
     # ==========================================
@@ -1358,11 +1370,18 @@ def page_estimation():
     
     with col_mid:
     
-        st.markdown("<br><br><br>", unsafe_allow_html=True)
-    
-        normalize_clicked = st.button(
-            "Chuẩn hóa dữ liệu ➜",
-            use_container_width=True
+        st.markdown(
+            """
+            <div style="
+                text-align:center;
+                font-size:48px;
+                color:#999;
+                margin-top:250px;
+            ">
+                ➡
+            </div>
+            """,
+            unsafe_allow_html=True
         )
     if normalize_clicked:
 
