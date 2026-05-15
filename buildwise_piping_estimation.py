@@ -363,21 +363,82 @@ if price_list_files:
                 except Exception as e:
                     st.error(f"Error deleting file: {e}")
 
-# Upload Estimation File + Matching
-st.subheader(":page_facing_up: Upload Estimation File (Tải lên File Yêu Cầu Báo Giá)")
-estimation_file = st.file_uploader("Upload estimation request (.xlsx) — Upload Estimation File (Tải lên File Yêu Cầu Báo Giá)", type=["xlsx"], key="est_file")
+st.subheader(":page_facing_up: Estimation Request Input")
+
+input_method = st.radio(
+    "Choose estimation input method:",
+    ["Upload Excel File", "Paste / Edit Table"]
+)
+
+estimation_file = None
+manual_est_df = None
+
+# -----------------------------------
+# OPTION 1: Upload Excel
+# -----------------------------------
+if input_method == "Upload Excel File":
+    estimation_file = st.file_uploader(
+        "Upload estimation request (.xlsx)",
+        type=["xlsx"],
+        key="est_file"
+    )
+
+# -----------------------------------
+# OPTION 2: Paste / Edit Table
+# -----------------------------------
+else:
+    st.markdown("### Paste or edit estimation table")
+
+    default_df = pd.DataFrame({
+        "Model": [""],
+        "Description": [""],
+        "Specification": [""],
+        "Unit": [""],
+        "Quantity": [1]
+    })
+
+    manual_est_df = st.data_editor(
+        default_df,
+        num_rows="dynamic",
+        use_container_width=True
+    )
+
+    st.info(
+        "You can copy and paste directly from Excel into the table above."
+    )
 run_matching = st.button("🔎 Match now")
 
 if run_matching:
-    if estimation_file is None:
-        st.error("Please upload an estimation file first.")
-        st.stop()
-    if not price_list_files:
-        st.error("Please upload at least one price list for your account first.")
-        st.stop()
-
-    # Read estimation
-    est = pd.read_excel(estimation_file).dropna(how='all')
+    # -----------------------------------
+    # Load estimation data
+    # -----------------------------------
+    if input_method == "Upload Excel File":
+    
+        if estimation_file is None:
+            st.error("Please upload an estimation file first.")
+            st.stop()
+    
+        est = pd.read_excel(estimation_file).dropna(how='all')
+    
+    else:
+    
+        if manual_est_df is None or manual_est_df.empty:
+            st.error("Please input estimation data.")
+            st.stop()
+    
+        est = manual_est_df.copy()
+    
+        # remove completely empty rows
+        est = est.dropna(how='all')
+    
+        # ensure column names
+        est.columns = [
+            "Model",
+            "Description",
+            "Specification",
+            "Unit",
+            "Quantity"
+        ]
     est_cols = est.columns.tolist()
     if len(est_cols) < 5:
         st.error("Estimation file must have at least 5 columns (Model, Description, Specification, Unit, Quantity).")
