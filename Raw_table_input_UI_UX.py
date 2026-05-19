@@ -109,6 +109,29 @@ CABLE_ALIASES = {
     "chong chay": "FR",
     "chống cháy": "FR",
 }
+# ==========================================
+# BRAND KEYWORDS
+# ==========================================
+
+BRAND_KEYWORDS = [
+    "cadisun",
+    "cadivi",
+    "ls",
+    "goldcup",
+    "taya",
+    "tran phu",
+]
+# ==========================================
+# FIRE KEYWORDS
+# ==========================================
+
+FIRE_KEYWORDS = [
+    "FRLS",
+    "LSZH",
+    "LSHF",
+    "FR",
+    "LS",
+]
 CABLE_MODEL_MAP = {
 
     # --------------------------------------
