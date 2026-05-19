@@ -99,7 +99,16 @@ def voltage_score(q_v, r_v):
 # ==========================================
 # CABLE MODEL MAP (PHASE 1)
 # ==========================================
-
+CABLE_ALIASES = {
+    "sup": "VCMD",
+    "súp": "VCMD",
+    "don soft": "VCM",
+    "đơn soft": "VCM",
+    "cap ngam": "DSTA",
+    "cáp ngầm": "DSTA",
+    "chong chay": "FR",
+    "chống cháy": "FR",
+}
 CABLE_MODEL_MAP = {
 
     # --------------------------------------
@@ -143,6 +152,139 @@ CABLE_MODEL_MAP = {
     "AVV": "Al/PVC/PVC",
     "AV": "Al/PVC",
 }
+# ==========================================
+# CLASSIFY CABLE TOKENS
+# ==========================================
+
+def classify_cable_tokens(text):
+
+    import re
+
+    raw = str(text)
+
+    text_low = raw.lower()
+
+    result = {
+        "brand": "",
+        "model": "",
+        "fire_rating": "",
+        "structure": "",
+    }
+
+    # --------------------------------------
+    # BRAND
+    # --------------------------------------
+    for b in BRAND_KEYWORDS:
+
+        if b.lower() in text_low:
+
+            result["brand"] = b.title()
+
+            break
+
+    # --------------------------------------
+    # MODEL
+    # --------------------------------------
+    for model in CABLE_MODEL_MAP.keys():
+
+        pattern = r"\b" + re.escape(model.lower()) + r"\b"
+
+        if re.search(pattern, text_low):
+
+            result["model"] = model.upper()
+
+            break
+
+    # --------------------------------------
+    # FIRE RATING
+    # --------------------------------------
+    for fr in FIRE_KEYWORDS:
+
+        pattern = r"\b" + re.escape(fr.lower()) + r"\b"
+
+        if re.search(pattern, text_low):
+
+            result["fire_rating"] = fr.upper()
+
+            break
+
+    # --------------------------------------
+    # STRUCTURE
+    # --------------------------------------
+    structure_match = re.search(
+        r"(\d+)\s*[cx×x]\s*(\d+(\.\d+)?)",
+        text_low
+    )
+
+    if structure_match:
+
+        cores = structure_match.group(1)
+
+        size = structure_match.group(2)
+
+        result["structure"] = f"{cores}Cx{size}mm2"
+
+    return result
+# ==========================================
+# BUILD CANONICAL DESCRIPTION
+# ==========================================
+
+def build_canonical_description(parsed):
+
+    parts = []
+
+    # --------------------------------------
+    # BRAND
+    # --------------------------------------
+    brand = parsed.get("brand", "")
+
+    if brand:
+
+        parts.append(brand.upper())
+
+    # --------------------------------------
+    # MODEL MATERIAL
+    # --------------------------------------
+    model = parsed.get("model", "")
+
+    material = ""
+
+    if model in CABLE_MODEL_MAP:
+
+        material = CABLE_MODEL_MAP[model]
+
+    # --------------------------------------
+    # FIRE RATING
+    # --------------------------------------
+    fire_rating = parsed.get("fire_rating", "")
+
+    if fire_rating and fire_rating not in material:
+
+        if "XLPE" in material:
+
+            material = material.replace(
+                "XLPE",
+                f"{fire_rating}/XLPE"
+            )
+
+        else:
+
+            material += f"/{fire_rating}"
+
+    if material:
+
+        parts.append(material)
+
+    # --------------------------------------
+    # STRUCTURE
+    # --------------------------------------
+    structure = parsed.get("structure", "")
+
+    if structure:
+
+        parts.append(structure)
+
+    return " ".join(parts).strip()
 # ==========================================
 # EXPAND CABLE MODEL
 # ==========================================
@@ -192,6 +334,31 @@ def clean(text: str) -> str:
     text = text.replace("-", " ")
     text = text.replace("cáp", "").replace("cable", "").replace("dây", "")
     text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"(\d),(\d)", r"\1.\2", text)
+    text = re.sub(r"(\d+)\s*mm\b", r"\1mm2", text)
+    text = re.sub(r"(\d)\s*x\s*(\d)", r"\1x\2", text)
+    text = re.sub(
+        r"(\d+)\s*lõi",
+        r"\1C",
+        text,
+        flags=re.IGNORECASE
+    )
+    # fix missing space
+    text = re.sub(
+        r"([a-zA-Z]+)(\d+x\d+)",
+        r"\1 \2",
+        text
+    )
+    
+    # cable aliases
+    for wrong, correct in CABLE_ALIASES.items():
+    
+        text = re.sub(
+            rf"\b{re.escape(wrong)}\b",
+            correct,
+            text,
+            flags=re.IGNORECASE
+        )
     return text
 
 # ------------------------------
@@ -216,7 +383,6 @@ def remove_index_column(df):
             df = df.drop(columns=[col])
             break
     return df
-
 
 def remove_empty_rows(df):
     return df[~df.apply(lambda r: all(str(v).strip() == "" for v in r), axis=1)]
@@ -329,7 +495,24 @@ def parse_pipeline(df):
 
     # STEP 5: normalize description
     # STEP 5A: expand cable model
-    df["Description"] = df["Description"].apply(expand_cable_model)
+    # semantic parsing
+    parsed_tokens = df["Description"].apply(
+        classify_cable_tokens
+    )
+    
+    # normalized columns
+    df["Brand"] = parsed_tokens.apply(
+        lambda x: x["brand"]
+    )
+    
+    df["Model"] = parsed_tokens.apply(
+        lambda x: x["model"]
+    )
+    
+    # canonical description
+    df["Description"] = parsed_tokens.apply(
+        build_canonical_description
+    )
     
     # STEP 5B: normalize description
     df["Description"] = df["Description"].apply(normalize_description)
