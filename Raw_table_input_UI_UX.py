@@ -533,9 +533,9 @@ def parse_pipeline(df):
     )
     
     # canonical description
-    df["Description"] = parsed_tokens.apply(
-        build_canonical_description
-    )
+    # df["Description"] = parsed_tokens.apply(
+    #     build_canonical_description
+    # )
     
     # STEP 5B: normalize description
     df["Description"] = df["Description"].apply(normalize_description)
