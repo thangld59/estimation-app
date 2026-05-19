@@ -518,25 +518,9 @@ def parse_pipeline(df):
 
     # STEP 5: normalize description
     # STEP 5A: expand cable model
-    # semantic parsing
-    parsed_tokens = df["Description"].apply(
-        classify_cable_tokens
-    )
-    
-    # normalized columns
-    df["Brand"] = parsed_tokens.apply(
-        lambda x: x["brand"]
-    )
-    
-    df["Model"] = parsed_tokens.apply(
-        lambda x: x["model"]
-    )
-    
-    # canonical description
-    # df["Description"] = parsed_tokens.apply(
-    #     build_canonical_description
-    # )
-    
+    df["Description"] = df["Description"].apply(
+        expand_cable_model
+    )    
     # STEP 5B: normalize description
     df["Description"] = df["Description"].apply(normalize_description)
 
