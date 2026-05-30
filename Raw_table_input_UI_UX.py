@@ -137,25 +137,24 @@ CABLE_MODEL_MAP = {
     # --------------------------------------
     # POWER CABLE
     # --------------------------------------
-    "CXV/DSTA": "Cu/XLPE/PVC/DSTA/PVC",
-    "CXV/DATA": "Cu/XLPE/PVC/DATA/PVC",
-    "CVV/DSTA": "Cu/PVC/PVC/DSTA/PVC",
-    "CVV/DATA": "Cu/PVC/PVC/DATA/PVC",
-
-    "CXV": "Cu/XLPE/PVC",
-    "CVV": "Cu/PVC/PVC",
-    "CV": "Cu/PVC",
-
+    "CV": "0.6/1kV Cu/PVC",
+    "CXV": "0.6/1kV/Cu/XLPE/PVC",
+    "CVV": "0.6/1kV/Cu/PVC/PVC",   
+    "DSTA": "0.6/1kV/Cu/PVC/XLPE/DSTA/PVC",
+    "DATA": "0.6/1kV/Cu/PVC/XLPE/DATA/PVC",
+    "DATA-W": "0.6/1kV/Cu/XLPE/PVC/DATA/PVC",
+    
     # --------------------------------------
     # CIVIL / LIGHT
     # --------------------------------------
-    "VCMD": "Cu/PVC mềm",
-    "VCM": "Cu/PVC mềm",
+    "VCMD": "0.6/1kV Cu/PVC xúp",
+    "VCSF": "450/750V/Cu/PVC mềm",
     "VC": "Cu/PVC",
-
-    "DUPLEX": "Cu/PVC/PVC",
-    "TWIN": "Cu/PVC/PVC",
-
+    "VCSH": "450/750V Cu/PVC cứng",
+    "VCTFK": "300/500V Cu/PVC/PVC Ovan",
+    "VCTF": "300/500V Cu/PVC/PVC",
+    "VCTF": "300/500V Cu/PVC/PVC",
+    
     # --------------------------------------
     # FIRE RESISTANT
     # --------------------------------------
@@ -163,9 +162,11 @@ CABLE_MODEL_MAP = {
     "FR-CVV": "Cu/FR-PVC/PVC",
     "FR-CV": "Cu/FR-PVC",
 
-    "LSZH": "LSZH",
-    "LSHF": "LSHF",
-
+    "FSN-CV": "0.6/1kV Cu/FR-PVC",
+    "FSN-CXV": "0.6/1kV Cu/XLPE/FR-PVC",
+    "FSN-DSTA": "0.6/1kV Cu/XLPE/PVC/DSTA/FR-PVC",
+    "FRN-CV": "0.6/1kV Cu/Mica/FR-PVC",
+    "FSN-CXV": "0.6/1kV Cu/Mica/XLPE/PVC/DSTA/FR-PVC",
     # --------------------------------------
     # ALUMINUM
     # --------------------------------------
