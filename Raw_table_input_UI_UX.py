@@ -1467,20 +1467,83 @@ def page_estimation():
 
     st.markdown("---")
     st.subheader("3. Matching estimation request file")
-
     estimation_file = st.file_uploader(
         "Upload estimation request (.xlsx)",
         type=["xlsx"],
         key="estimation_file_main",
-        )
+    )
+    
     st.markdown("### 📥 Hoặc paste trực tiếp từ Excel")
     
     paste_text = st.text_area(
-        "Paste dữ liệu (Ctrl + V) - không copy cột thứ tự, và để cột trống",
-        height=200,
+        "Paste dữ liệu từ Excel vào đây",
+        height=160,
+        key="paste_text_main",
     )
-        
-  
+    
+    col_load_excel, col_load_paste, col_clear = st.columns([1, 1, 1])
+    
+    with col_load_excel:
+        load_excel_clicked = st.button("Load Excel to table")
+    
+    with col_load_paste:
+        load_paste_clicked = st.button("Load pasted text to table")
+    
+    with col_clear:
+        clear_table_clicked = st.button("Clear table")
+    if load_excel_clicked:
+        if estimation_file is None:
+            st.error("Please upload an Excel estimation file first.")
+        else:
+            try:
+                df_excel = pd.read_excel(estimation_file).dropna(how="all")
+                st.session_state["raw_table"] = df_excel
+                st.success("Excel loaded to raw table.")
+                st.experimental_rerun()
+            except Exception as e:
+                st.error(f"Cannot read Excel file: {e}")
+    
+    if load_paste_clicked:
+        if not paste_text.strip():
+            st.error("Please paste data first.")
+        else:
+            try:
+                df_paste = parse_paste_to_df(paste_text)
+                if df_paste is None or df_paste.empty:
+                    st.error("Cannot parse pasted data.")
+                else:
+                    st.session_state["raw_table"] = df_paste
+                    st.success("Pasted data loaded to raw table.")
+                    st.experimental_rerun()
+            except Exception as e:
+                st.error(f"Cannot load pasted data: {e}")
+    
+    if clear_table_clicked:
+        st.session_state["raw_table"] = pd.DataFrame(
+            {
+                "Model": [""] * 5,
+                "Description": [""] * 5,
+                "Brand": [""] * 5,
+                "Unit": [""] * 5,
+                "Qty": [""] * 5,
+            }
+        )
+    
+        st.session_state["est_table"] = pd.DataFrame(
+            {
+                "Model": [""] * 5,
+                "Description (Raw)": [""] * 5,
+                "Description (Normalized)": [""] * 5,
+                "Specification": [""] * 5,
+                "Unit": [""] * 5,
+                "Quantity": [""] * 5,
+                "Description": [""] * 5,
+            }
+        )
+    
+        st.success("Tables cleared.")
+        st.experimental_rerun()
+
     match_threshold = st.session_state.get("match_threshold", 70)
     w_size = st.session_state.get("weight_size", 0.45)
     w_cores = st.session_state.get("weight_cores", 0.25)
