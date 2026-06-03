@@ -517,13 +517,21 @@ def parse_pipeline(df):
     # STEP 4: remove group header
     df = remove_group_header(df)
 
-    # STEP 5: normalize description
+    # STEP 5: keep raw description for checking
+    df["Description (Raw)"] = df["Description"].astype(str)
+    
     # STEP 5A: expand cable model
-    df["Description"] = df["Description"].apply(
+    df["Description (Normalized)"] = df["Description"].apply(
         expand_cable_model
-    )    
+    )
+    
     # STEP 5B: normalize description
-    df["Description"] = df["Description"].apply(normalize_description)
+    df["Description (Normalized)"] = df["Description (Normalized)"].apply(
+        normalize_description
+    )
+    
+    # Keep old Description column for matching compatibility
+    df["Description"] = df["Description (Normalized)"]
 
     # STEP 6: validate + fix
     df = validate_and_fix(df)
@@ -1592,11 +1600,26 @@ def page_estimation():
         st.caption("Bạn có thể chỉnh sửa trực tiếp")
     
         display_df = st.session_state["est_table"].copy()
-    
+        
+        # Hide internal matching column if duplicated
         display_df = display_df.drop(
-            columns=["Category"],
+            columns=["Description", "Category"],
             errors="ignore"
         )
+        
+        preferred_cols = [
+            "Model",
+            "Description (Raw)",
+            "Description (Normalized)",
+            "Specification",
+            "Unit",
+            "Quantity",
+        ]
+        
+        display_df = display_df[
+            [c for c in preferred_cols if c in display_df.columns]
+            + [c for c in display_df.columns if c not in preferred_cols]
+        ]
     
         edited_df = st.data_editor(
             display_df,
@@ -1611,7 +1634,10 @@ def page_estimation():
             edited_df["Category"] = (
                 st.session_state["est_table"]["Category"].values
             )
-    
+        # Restore Description column for matching
+        if "Description (Normalized)" in edited_df.columns:
+            edited_df["Description"] = edited_df["Description (Normalized)"]
+        
         st.session_state["est_table"] = edited_df
  
     col_match_btn, _ = st.columns([1, 3])
