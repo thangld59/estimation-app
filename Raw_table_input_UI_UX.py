@@ -1585,57 +1585,39 @@ def page_estimation():
                 "Unit": [""] * 5,
                 "Quantity": [""] * 5,
             }
-        )
-    
-    # ==========================================
-    # RAW + NORMALIZED TABLE LAYOUT
-    # ==========================================
-    
-    col_raw, col_mid, col_norm = st.columns([5, 1, 5])
-    
+            )
     # ==========================================
     # RAW TABLE
     # ==========================================
     
-    with col_raw:
+    st.subheader("📝 Dữ liệu chưa chuẩn hóa")
     
-        st.subheader("📝 Dữ liệu chưa chuẩn hóa")
+    st.caption("Bạn có thể copy / paste hoặc nhập trực tiếp")
     
-        st.caption("Bạn có thể copy / paste hoặc nhập trực tiếp")
+    raw_df = st.data_editor(
+        st.session_state["raw_table"],
+        num_rows="dynamic",
+        use_container_width=True,
+        key="raw_editor",
+    )
     
-        raw_df = st.data_editor(
-            st.session_state["raw_table"],
-            num_rows="dynamic",
-            use_container_width=True,
-            key="raw_editor",
-        )
-    
-        st.session_state["raw_table"] = raw_df
+    st.session_state["raw_table"] = raw_df
     
     # ==========================================
     # NORMALIZE BUTTON
     # ==========================================
     
-    normalize_clicked = False
+    normalize_clicked = st.button(
+        "Normalize data ➜",
+        use_container_width=True
+    )
     
-    with col_mid:
-    
-        st.markdown("<br><br><br>", unsafe_allow_html=True)
-    
-        normalize_clicked = st.button(
-            "Chuẩn hóa dữ liệu ➜",
-            use_container_width=True
-        )
     if normalize_clicked:
-
         try:
-    
             df_raw = st.session_state["raw_table"].copy()
     
-            # remove fully empty rows
             df_raw = df_raw.dropna(how="all")
     
-            # rename to parser format
             df_raw = df_raw.rename(
                 columns={
                     "Brand": "Specification",
@@ -1650,58 +1632,49 @@ def page_estimation():
             st.success("Chuẩn hóa dữ liệu thành công")
     
         except Exception as e:
-    
             st.error(f"Lỗi chuẩn hóa dữ liệu: {e}")
+    
     # ==========================================
     # NORMALIZED TABLE
     # ==========================================
     
-    with col_norm:
+    st.subheader("📊 Dữ liệu sau chuẩn hóa")
     
-        st.subheader("📊 Dữ liệu sau chuẩn hóa")
+    st.caption("Bạn có thể chỉnh sửa trực tiếp")
     
-        st.caption("Bạn có thể chỉnh sửa trực tiếp")
+    display_df = st.session_state["est_table"].copy()
     
-        display_df = st.session_state["est_table"].copy()
-        
-        # Hide internal matching column if duplicated
-        display_df = display_df.drop(
-            columns=["Description", "Category"],
-            errors="ignore"
-        )
-        
-        preferred_cols = [
-            "Model",
-            "Description (Raw)",
-            "Description (Normalized)",
-            "Specification",
-            "Unit",
-            "Quantity",
-        ]
-        
-        display_df = display_df[
-            [c for c in preferred_cols if c in display_df.columns]
-            + [c for c in display_df.columns if c not in preferred_cols]
-        ]
+    display_df = display_df.drop(
+        columns=["Description", "Category"],
+        errors="ignore"
+    )
     
-        edited_df = st.data_editor(
-            display_df,
-            num_rows="dynamic",
-            use_container_width=True,
-            key="normalized_editor",
-        )
+    preferred_cols = [
+        "Model",
+        "Description (Raw)",
+        "Description (Normalized)",
+        "Specification",
+        "Unit",
+        "Quantity",
+    ]
     
-        # restore category if exists
-        if "Category" in st.session_state["est_table"].columns:
+    display_df = display_df[
+        [c for c in preferred_cols if c in display_df.columns]
+        + [c for c in display_df.columns if c not in preferred_cols]
+    ]
     
-            edited_df["Category"] = (
-                st.session_state["est_table"]["Category"].values
-            )
-        # Restore Description column for matching
-        if "Description (Normalized)" in edited_df.columns:
-            edited_df["Description"] = edited_df["Description (Normalized)"]
-        
-        st.session_state["est_table"] = edited_df
+    edited_df = st.data_editor(
+        display_df,
+        num_rows="dynamic",
+        use_container_width=True,
+        key="normalized_editor",
+    )
+    
+    if "Description (Normalized)" in edited_df.columns:
+        edited_df["Description"] = edited_df["Description (Normalized)"]
+    
+    st.session_state["est_table"] = edited_df 
+
  
     col_match_btn, _ = st.columns([1, 3])
     with col_match_btn:
