@@ -444,11 +444,73 @@ def remove_group_header(df):
     ]
 
 def normalize_description(text):
-    text = str(text).lower()
+    text = str(text)
 
-    text = re.sub(r"sqmm|sqm|mm²", "mm2", text)
-    text = re.sub(r"(\d+)\s*[cC]\s*[x×]\s*(\d+)", r"\1x\2", text)
-    text = re.sub(r"(\d+)\s*mm2", r"\1mm2", text)
+    # basic cleanup
+    text = text.strip()
+    text = re.sub(r"\s+", " ", text)
+
+    # normalize common symbols
+    text = text.replace("×", "x")
+    text = text.replace("Ø", "D")
+    text = text.replace("ø", "D")
+    text = text.replace("φ", "D")
+    text = text.replace("Phi", "D")
+    text = text.replace("phi", "D")
+
+    # normalize decimal comma: 2,5 -> 2.5
+    text = re.sub(r"(\d+),(\d+)", r"\1.\2", text)
+
+    # normalize mm2 variations
+    text = re.sub(
+        r"\b(sqmm|sq\.mm|mm²|mm\^2|mmsq)\b",
+        "mm2",
+        text,
+        flags=re.IGNORECASE
+    )
+
+    # normalize core format: 3 C x 10 / 3Cx10 / 3c x 10 -> 3x10
+    text = re.sub(
+        r"\b(\d+)\s*[cC]?\s*x\s*(\d+(?:\.\d+)?)\s*(mm2)?\b",
+        r"\1x\2mm2",
+        text,
+        flags=re.IGNORECASE
+    )
+
+    # normalize aux cable: + E 6 / +E6 / + PE 6 -> +E6
+    text = re.sub(
+        r"\+\s*(PE|E)\s*(\d+(?:\.\d+)?)\s*(mm2)?\b",
+        r"+E\2mm2",
+        text,
+        flags=re.IGNORECASE
+    )
+
+    # normalize neutral cable: + N 6 -> +N6
+    text = re.sub(
+        r"\+\s*N\s*(\d+(?:\.\d+)?)\s*(mm2)?\b",
+        r"+N\1mm2",
+        text,
+        flags=re.IGNORECASE
+    )
+
+    # normalize extra core: + 1 x 6 / +1Cx6 -> +1x6mm2
+    text = re.sub(
+        r"\+\s*(\d+)\s*[cC]?\s*x\s*(\d+(?:\.\d+)?)\s*(mm2)?\b",
+        r"+\1x\2mm2",
+        text,
+        flags=re.IGNORECASE
+    )
+
+    # normalize voltage spaces
+    text = re.sub(
+        r"\b(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)\s*(kv|v)\b",
+        r"\1/\2\3",
+        text,
+        flags=re.IGNORECASE
+    )
+
+    # final spaces
+    text = re.sub(r"\s+", " ", text).strip()
 
     return text
 
