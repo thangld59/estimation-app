@@ -513,6 +513,23 @@ def normalize_description(text):
     text = re.sub(r"\s+", " ", text).strip()
 
     return text
+    
+def build_matching_text(row):
+    parts = []
+
+    for col in [
+        "Model",
+        "Description",
+        "Description (Raw)",
+        "Specification",
+        "Brand",
+    ]:
+        if col in row.index:
+            val = str(row.get(col, "")).strip()
+            if val and val.lower() != "nan":
+                parts.append(val)
+
+    return " ".join(parts).strip()
 
 def validate_and_fix(df):
 
@@ -582,19 +599,28 @@ def parse_pipeline(df):
     # STEP 5: keep raw description for checking
     df["Description (Raw)"] = df["Description"].astype(str)
     
-    # STEP 5A: expand cable model
-    df["Description (Normalized)"] = df["Description"].apply(
-        expand_cable_model
+    # STEP 5A: build matching text from important columns
+    df["Matching Text (Raw)"] = df.apply(
+        build_matching_text,
+        axis=1
     )
     
-    # STEP 5B: normalize description
-    df["Description (Normalized)"] = df["Description (Normalized)"].apply(
+    # STEP 5B: normalize matching text
+    df["Matching Text (Normalized)"] = df["Matching Text (Raw)"].apply(
+        expand_cable_model
+    ).apply(
         normalize_description
     )
     
-    # Keep old Description column for matching compatibility
+    # STEP 5C: normalize description only for review/checking
+    df["Description (Normalized)"] = df["Description (Raw)"].apply(
+        expand_cable_model
+    ).apply(
+        normalize_description
+    )
+    
+    # Keep old Description column for current matching compatibility
     df["Description"] = df["Description (Normalized)"]
-
     # STEP 6: validate + fix
     df = validate_and_fix(df)
 
@@ -1716,8 +1742,11 @@ def page_estimation():
         "Description (Raw)",
         "Description (Normalized)",
         "Specification",
+        "Brand",
         "Unit",
         "Quantity",
+        "Matching Text (Raw)",
+        "Matching Text (Normalized)",
     ]
     
     display_df = display_df[
