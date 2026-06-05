@@ -605,7 +605,7 @@ def parse_pipeline(df):
     
     # Keep old Description column for current matching compatibility
     df["Description"] = df["Description (Normalized)"]
-    df["Description"] = df["Description (Normalized)"]
+
     # STEP 6: validate + fix
     df = validate_and_fix(df)
 
@@ -1735,6 +1735,7 @@ def page_estimation():
             {
                 "Model": [""] * 5,
                 "Description": [""] * 5,
+                "Specification": [""] * 5,
                 "Brand": [""] * 5,
                 "Unit": [""] * 5,
                 "Qty": [""] * 5,
@@ -1745,16 +1746,18 @@ def page_estimation():
     # ==========================================
     
     if "est_table" not in st.session_state:
-    
+            
         st.session_state["est_table"] = pd.DataFrame(
             {
                 "Model": [""] * 5,
-                "Description": [""] * 5,
-                "Specification": [""] * 5,
+                "Description (Raw)": [""] * 5,
+                "Description (Normalized)": [""] * 5,
+                "Brand": [""] * 5,
                 "Unit": [""] * 5,
                 "Quantity": [""] * 5,
+                "Description": [""] * 5,
             }
-            )
+        )
     # ==========================================
     # RAW TABLE
     # ==========================================
@@ -1829,7 +1832,6 @@ def page_estimation():
     
     display_df = display_df[
         [c for c in preferred_cols if c in display_df.columns]
-        + [c for c in display_df.columns if c not in preferred_cols]
     ]
     
     edited_df = st.data_editor(
