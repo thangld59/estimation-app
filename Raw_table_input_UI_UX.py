@@ -1792,7 +1792,6 @@ def page_estimation():
     
             df_raw = df_raw.rename(
                 columns={
-                    "Brand": "Specification",
                     "Qty": "Quantity",
                 }
             )
