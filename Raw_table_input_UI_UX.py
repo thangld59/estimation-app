@@ -514,16 +514,10 @@ def normalize_description(text):
 
     return text
     
-def build_matching_text(row):
+def build_description_raw(row):
     parts = []
 
-    for col in [
-        "Model",
-        "Description",
-        "Description (Raw)",
-        "Specification",
-        "Brand",
-    ]:
+    for col in ["Description", "Specification"]:
         if col in row.index:
             val = str(row.get(col, "")).strip()
             if val and val.lower() != "nan":
@@ -596,23 +590,13 @@ def parse_pipeline(df):
     # STEP 4: remove group header
     df = remove_group_header(df)
 
-    # STEP 5: keep raw description for checking
-    df["Description (Raw)"] = df["Description"].astype(str)
-    
-    # STEP 5A: build matching text from important columns
-    df["Matching Text (Raw)"] = df.apply(
-        build_matching_text,
+    # STEP 5: combine Description + Specification into one raw description
+    df["Description (Raw)"] = df.apply(
+        build_description_raw,
         axis=1
     )
     
-    # STEP 5B: normalize matching text
-    df["Matching Text (Normalized)"] = df["Matching Text (Raw)"].apply(
-        expand_cable_model
-    ).apply(
-        normalize_description
-    )
-    
-    # STEP 5C: normalize description only for review/checking
+    # STEP 5A: normalize combined description
     df["Description (Normalized)"] = df["Description (Raw)"].apply(
         expand_cable_model
     ).apply(
@@ -620,6 +604,7 @@ def parse_pipeline(df):
     )
     
     # Keep old Description column for current matching compatibility
+    df["Description"] = df["Description (Normalized)"]
     df["Description"] = df["Description (Normalized)"]
     # STEP 6: validate + fix
     df = validate_and_fix(df)
@@ -1837,12 +1822,9 @@ def page_estimation():
         "Model",
         "Description (Raw)",
         "Description (Normalized)",
-        "Specification",
         "Brand",
         "Unit",
         "Quantity",
-        "Matching Text (Raw)",
-        "Matching Text (Normalized)",
     ]
     
     display_df = display_df[
