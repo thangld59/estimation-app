@@ -828,102 +828,198 @@ def parse_paste_to_df(paste_text):
         print(e)
 
         return None
-
 def map_columns(df):
     import re
 
+    df = df.copy()
+
+    def clean_col_name(col):
+        return str(col).strip().lower()
+
     def is_number(val):
         try:
-            float(str(val).replace(",", ""))
+            s = str(val).strip().replace(",", "")
+            if s == "" or s.lower() == "nan":
+                return False
+            float(s)
             return True
         except:
             return False
 
-    def is_cable(text):
-        text = str(text).lower()
+    def is_unit(val):
+        v = str(val).strip().lower()
+        return v in [
+            "m", "meter", "meters", "metre", "metres", "mét", "mtr",
+            "pcs", "pc", "piece", "pieces",
+            "cái", "chiếc", "bộ", "set",
+            "cuộn", "roll", "lot", "ls",
+        ]
 
+    def is_brand(val):
+        v = str(val).strip().lower()
+        return any(
+            b in v
+            for b in [
+                "cadivi", "cadisun", "ls", "goldcup",
+                "taya", "trần phú", "tran phu",
+            ]
+        )
+
+    def is_technical_text(val):
+        v = str(val).strip().lower()
         return bool(
             re.search(
-                r"\d+x\d+"           # 4x6
-                r"|mm2"             # mm2
-                r"|sqmm|sqm"        # sqm
-                r"|cu|xlpe|pvc"     # vật liệu
-                r"|fr|dsta|data"    # lớp bảo vệ
-                r"|cáp|day|wire|cable",  # từ khóa
-                text
+                r"cu|al|xlpe|pvc|dsta|data|swa|fr|lszh|frls|"
+                r"\d+\s*[cCxX×]?\s*[xX×]\s*\d+|"
+                r"\+\s*(e|pe|n)?\s*\d+|"
+                r"0\.?6\s*/\s*1\s*k?v|"
+                r"450\s*/\s*750\s*v|"
+                r"cable|cáp|dây|wire|power cable|underground",
+                v,
+                flags=re.IGNORECASE,
             )
         )
 
-    col_scores = {}
+    # ------------------------------
+    # 1. Map by header names first
+    # ------------------------------
+    header_map = {}
 
     for col in df.columns:
-        values = df[col].astype(str)
+        c = clean_col_name(col)
 
-        score = {
-            "Description": 0,
-            "Quantity": 0,
+        if c in ["item", "stt", "no", "no.", "#"]:
+            header_map["Item"] = col
+
+        elif c in ["model", "type", "mã", "ma", "mã hàng", "ma hang"]:
+            header_map["Model"] = col
+
+        elif c in ["description", "mô tả", "mo ta", "desc", "item description"]:
+            header_map["Description"] = col
+
+        elif c in [
+            "specification", "specifications", "spec",
+            "thông số", "thong so", "quy cách", "quy cach",
+        ]:
+            header_map["Specification"] = col
+
+        elif c in ["brand", "hãng", "hang", "manufacturer", "make"]:
+            header_map["Brand"] = col
+
+        elif c in ["unit", "đơn vị", "don vi", "uom"]:
+            header_map["Unit"] = col
+
+        elif c in ["qty", "q'ty", "quantity", "số lượng", "so luong", "kl"]:
+            header_map["Quantity"] = col
+
+    # ------------------------------
+    # 2. Score columns by content if no header
+    # ------------------------------
+    scores = {}
+
+    for col in df.columns:
+        values = df[col].astype(str).head(20)
+
+        scores[col] = {
             "Model": 0,
+            "Description": 0,
             "Specification": 0,
+            "Brand": 0,
             "Unit": 0,
+            "Quantity": 0,
         }
 
-        for v in values.head(10):
-            v = str(v)
-            v_low = v.lower()
+        for v in values:
+            v_clean = str(v).strip()
+            v_low = v_clean.lower()
 
-            # Quantity
-            if is_number(v):
-                score["Quantity"] += 2
+            if not v_clean or v_low == "nan":
+                continue
 
-            # Description (PRIORITY)
-            if is_cable(v):
-                score["Description"] += 3   # ⭐ tăng trọng số
+            if is_number(v_clean):
+                scores[col]["Quantity"] += 3
 
-            # Unit
-            if v_low in ["m", "mét", "cuộn", "chiếc", "cái", "cây", "mtr", "pcs"]:
-                score["Unit"] += 3
+            if is_unit(v_clean):
+                scores[col]["Unit"] += 5
 
-            # Model (short text only)
+            if is_brand(v_clean):
+                scores[col]["Brand"] += 5
+
+            if is_technical_text(v_clean):
+                scores[col]["Specification"] += 4
+
+            if re.search(r"cable|cáp|dây|wire|power|underground", v_low):
+                scores[col]["Description"] += 3
+
             if (
-                len(v.split()) <= 2
-                and not is_number(v)
-                and v_low not in [
-                    "m",
-                    "mét",
-                    "cuộn",
-                    "pcs",
-                    "cái",
-                ]
+                len(v_clean.split()) <= 2
+                and not is_number(v_clean)
+                and not is_unit(v_clean)
+                and not is_brand(v_clean)
+                and re.search(r"[a-zA-Z]", v_clean)
             ):
-                score["Model"] += 1
-
-            # Spec (brand)
-            if any(b in v_low for b in ["cadisun", "cadivi", "ls", "goldcup", "Taya","Tran Phu"]):
-                score["Specification"] += 2
-
-        col_scores[col] = score
+                scores[col]["Model"] += 2
 
     assigned = {}
 
-    for target in ["Description", "Quantity", "Unit", "Specification", "Model"]:
-        best_col = None
-        best_score = -1
+    # First: use header mapping
+    for target in [
+        "Model",
+        "Description",
+        "Specification",
+        "Brand",
+        "Unit",
+        "Quantity",
+    ]:
+        if target in header_map:
+            assigned[target] = header_map[target]
 
-        for col, scores in col_scores.items():
-            if scores[target] > best_score and col not in assigned.values():
-                best_score = scores[target]
+    # Second: fill missing by score
+    used_cols = set(assigned.values())
+
+    for target in [
+        "Model",
+        "Description",
+        "Specification",
+        "Brand",
+        "Unit",
+        "Quantity",
+    ]:
+        if target in assigned:
+            continue
+
+        best_col = None
+        best_score = 0
+
+        for col, sc in scores.items():
+            if col in used_cols:
+                continue
+
+            if sc[target] > best_score:
+                best_score = sc[target]
                 best_col = col
 
-        if best_col:
+        if best_col is not None and best_score > 0:
             assigned[target] = best_col
+            used_cols.add(best_col)
 
+    # ------------------------------
+    # 3. Build result dataframe
+    # ------------------------------
     result = pd.DataFrame()
 
-    result["Model"] = df[assigned["Model"]] if "Model" in assigned else ""
-    result["Description"] = df[assigned["Description"]] if "Description" in assigned else ""
-    result["Specification"] = df[assigned["Specification"]] if "Specification" in assigned else ""
-    result["Unit"] = df[assigned["Unit"]] if "Unit" in assigned else ""
-    result["Quantity"] = df[assigned["Quantity"]] if "Quantity" in assigned else ""
+    for target in [
+        "Model",
+        "Description",
+        "Specification",
+        "Brand",
+        "Unit",
+        "Quantity",
+    ]:
+        if target in assigned:
+            result[target] = df[assigned[target]]
+        else:
+            result[target] = ""
 
     return result
 
