@@ -1744,32 +1744,37 @@ def page_estimation():
                     st.rerun()
             except Exception as e:
                 st.error(f"Cannot load pasted data: {e}")
-        
+            
     if clear_table_clicked:
-    
         st.session_state["raw_table"] = pd.DataFrame(
-            columns=[
-                "Model",
-                "Description",
-                "Specification",
-                "Brand",
-                "Unit",
-                "Qty",
-            ]
+            {
+                "Model": [""] * 5,
+                "Description": [""] * 5,
+                "Specification": [""] * 5,
+                "Brand": [""] * 5,
+                "Unit": [""] * 5,
+                "Qty": [""] * 5,
+            }
         )
     
         st.session_state["est_table"] = pd.DataFrame(
-            columns=[
-                "Model",
-                "Description (Raw)",
-                "Description (Normalized)",
-                "Brand",
-                "Unit",
-                "Quantity",
-                "Description",
-            ]
+            {
+                "Model": [""] * 5,
+                "Description (Raw)": [""] * 5,
+                "Description (Normalized)": [""] * 5,
+                "Brand": [""] * 5,
+                "Unit": [""] * 5,
+                "Quantity": [""] * 5,
+                "Description": [""] * 5,
+            }
         )
     
+        st.session_state["last_match_df"] = None
+        st.session_state["last_unmatched_df"] = None
+        st.session_state["quotation_bytes"] = None
+        st.session_state["quotation_filename"] = None
+    
+        st.success("Tables cleared.")
         st.rerun()
 
     match_threshold = st.session_state.get("match_threshold", 70)
