@@ -1152,7 +1152,7 @@ if not st.session_state["logged_in"]:
                 st.success(
                     f"Logged in as {st.session_state['username']} ({st.session_state['role']})"
                 )
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.error("Invalid username or password. Edit users.json to add users.")
     st.stop()
@@ -1169,7 +1169,7 @@ with col1:
 with col2:
     if st.button("Logout"):
         do_logout()
-        st.experimental_rerun()
+        st.rerun()
 
 # ensure folders
 user_folder = os.path.join("user_data", username)
@@ -1477,7 +1477,7 @@ def page_customers():
                     customers.append(new)
                     save_customers_for(owner, customers)
                     st.success("Customer added.")
-                    st.experimental_rerun()
+                    st.rerun()
 
     if not customers:
         st.info("No customers yet.")
@@ -1537,14 +1537,14 @@ def page_customers():
                         break
                 save_customers_for(owner, customers)
                 st.success("Customer updated.")
-                st.experimental_rerun()
+                st.rerun()
 
     with col_delete:
         if st.button("Delete customer"):
             new_list = [c for c in customers if str(c.get("id")) != sel_id]
             save_customers_for(owner, new_list)
             st.success("Customer deleted.")
-            st.experimental_rerun()
+            st.rerun()
 
 # ------------------------------
 # Forms & Instructions
@@ -1570,7 +1570,7 @@ def page_forms_and_instructions():
                 except Exception as e:
                     st.error(f"Error saving {f.name}: {e}")
             st.success("Form(s) uploaded.")
-            st.experimental_rerun()
+            st.rerun()
 
         if form_files:
             to_del = st.selectbox("Select form to delete", [""] + form_files)
@@ -1578,7 +1578,7 @@ def page_forms_and_instructions():
                 try:
                     os.remove(os.path.join(FORM_FOLDER, to_del))
                     st.success("Form deleted.")
-                    st.experimental_rerun()
+                    st.rerun()
                 except Exception as e:
                     st.error(f"Error deleting form: {e}")
     else:
@@ -1626,7 +1626,7 @@ def page_quotations():
             if st.button("Delete", key=f"del_q_{f}"):
                 os.remove(path)
                 st.success("Quotation deleted.")
-                st.experimental_rerun()
+                st.rerun()
 
 # ------------------------------
 # Estimation page
@@ -1657,7 +1657,7 @@ def page_estimation():
             except Exception as e:
                 st.error(f"Error saving {f.name}: {e}")
         st.success("Price list(s) uploaded.")
-        st.experimental_rerun()
+        st.rerun()
 
     st.subheader("2. Manage price lists")
     price_list_files = list_price_list_files(user_folder)
@@ -1688,7 +1688,7 @@ def page_estimation():
                     try:
                         os.remove(os.path.join(user_folder, to_del))
                         st.success(f"Deleted {to_del}")
-                        st.experimental_rerun()
+                        st.rerun()
                     except Exception as e:
                         st.error(f"Error deleting file: {e}")
 
@@ -1726,7 +1726,7 @@ def page_estimation():
                 df_excel = pd.read_excel(estimation_file).dropna(how="all")
                 st.session_state["raw_table"] = df_excel
                 st.success("Excel loaded to raw table.")
-                st.experimental_rerun()
+                st.rerun()
             except Exception as e:
                 st.error(f"Cannot read Excel file: {e}")
     
@@ -1741,35 +1741,36 @@ def page_estimation():
                 else:
                     st.session_state["raw_table"] = df_paste
                     st.success("Pasted data loaded to raw table.")
-                    st.experimental_rerun()
+                    st.rerun()
             except Exception as e:
                 st.error(f"Cannot load pasted data: {e}")
-    
+        
     if clear_table_clicked:
+    
         st.session_state["raw_table"] = pd.DataFrame(
-            {
-                "Model": [""] * 5,
-                "Description": [""] * 5,
-                "Brand": [""] * 5,
-                "Unit": [""] * 5,
-                "Qty": [""] * 5,
-            }
+            columns=[
+                "Model",
+                "Description",
+                "Specification",
+                "Brand",
+                "Unit",
+                "Qty",
+            ]
         )
     
         st.session_state["est_table"] = pd.DataFrame(
-            {
-                "Model": [""] * 5,
-                "Description (Raw)": [""] * 5,
-                "Description (Normalized)": [""] * 5,
-                "Specification": [""] * 5,
-                "Unit": [""] * 5,
-                "Quantity": [""] * 5,
-                "Description": [""] * 5,
-            }
+            columns=[
+                "Model",
+                "Description (Raw)",
+                "Description (Normalized)",
+                "Brand",
+                "Unit",
+                "Quantity",
+                "Description",
+            ]
         )
     
-        st.success("Tables cleared.")
-        st.experimental_rerun()
+        st.rerun()
 
     match_threshold = st.session_state.get("match_threshold", 70)
     w_size = st.session_state.get("weight_size", 0.45)
@@ -2208,7 +2209,7 @@ def page_estimation():
                             break
                     save_customers_for(username, customers)
                     st.success("Customer updated.")
-                    st.experimental_rerun()
+                    st.rerun()
 
     # Trading terms
     st.markdown("#### Trading terms / Điều khoản thương mại")
