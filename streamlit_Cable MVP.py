@@ -137,24 +137,25 @@ CABLE_MODEL_MAP = {
     # --------------------------------------
     # POWER CABLE
     # --------------------------------------
-    "CV": "0.6/1kV Cu/PVC",
-    "CXV": "0.6/1kV/Cu/XLPE/PVC",
-    "CVV": "0.6/1kV/Cu/PVC/PVC",   
-    "DSTA": "0.6/1kV/Cu/PVC/XLPE/DSTA/PVC",
-    "DATA": "0.6/1kV/Cu/PVC/XLPE/DATA/PVC",
-    "DATA-W": "0.6/1kV/Cu/XLPE/PVC/DATA/PVC",
-    
+    "CXV/DSTA": "Cu/XLPE/PVC/DSTA/PVC",
+    "CXV/DATA": "Cu/XLPE/PVC/DATA/PVC",
+    "CVV/DSTA": "Cu/PVC/PVC/DSTA/PVC",
+    "CVV/DATA": "Cu/PVC/PVC/DATA/PVC",
+
+    "CXV": "Cu/XLPE/PVC",
+    "CVV": "Cu/PVC/PVC",
+    "CV": "Cu/PVC",
+
     # --------------------------------------
     # CIVIL / LIGHT
     # --------------------------------------
-    "VCMD": "0.6/1kV Cu/PVC xúp",
-    "VCSF": "450/750V/Cu/PVC mềm",
+    "VCMD": "Cu/PVC mềm",
+    "VCM": "Cu/PVC mềm",
     "VC": "Cu/PVC",
-    "VCSH": "450/750V Cu/PVC cứng",
-    "VCTFK": "300/500V Cu/PVC/PVC Ovan",
-    "VCTF": "300/500V Cu/PVC/PVC",
-    "VCTF": "300/500V Cu/PVC/PVC",
-    
+
+    "DUPLEX": "Cu/PVC/PVC",
+    "TWIN": "Cu/PVC/PVC",
+
     # --------------------------------------
     # FIRE RESISTANT
     # --------------------------------------
@@ -162,11 +163,9 @@ CABLE_MODEL_MAP = {
     "FR-CVV": "Cu/FR-PVC/PVC",
     "FR-CV": "Cu/FR-PVC",
 
-    "FSN-CV": "0.6/1kV Cu/FR-PVC",
-    "FSN-CXV": "0.6/1kV Cu/XLPE/FR-PVC",
-    "FSN-DSTA": "0.6/1kV Cu/XLPE/PVC/DSTA/FR-PVC",
-    "FRN-CV": "0.6/1kV Cu/Mica/FR-PVC",
-    "FSN-CXV": "0.6/1kV Cu/Mica/XLPE/PVC/DSTA/FR-PVC",
+    "LSZH": "LSZH",
+    "LSHF": "LSHF",
+
     # --------------------------------------
     # ALUMINUM
     # --------------------------------------
@@ -517,21 +516,13 @@ def parse_pipeline(df):
     # STEP 4: remove group header
     df = remove_group_header(df)
 
-    # STEP 5: keep raw description for checking
-    df["Description (Raw)"] = df["Description"].astype(str)
-    
+    # STEP 5: normalize description
     # STEP 5A: expand cable model
-    df["Description (Normalized)"] = df["Description"].apply(
+    df["Description"] = df["Description"].apply(
         expand_cable_model
-    )
-    
+    )    
     # STEP 5B: normalize description
-    df["Description (Normalized)"] = df["Description (Normalized)"].apply(
-        normalize_description
-    )
-    
-    # Keep old Description column for matching compatibility
-    df["Description"] = df["Description (Normalized)"]
+    df["Description"] = df["Description"].apply(normalize_description)
 
     # STEP 6: validate + fix
     df = validate_and_fix(df)
@@ -1600,26 +1591,11 @@ def page_estimation():
         st.caption("Bạn có thể chỉnh sửa trực tiếp")
     
         display_df = st.session_state["est_table"].copy()
-        
-        # Hide internal matching column if duplicated
+    
         display_df = display_df.drop(
-            columns=["Description", "Category"],
+            columns=["Category"],
             errors="ignore"
         )
-        
-        preferred_cols = [
-            "Model",
-            "Description (Raw)",
-            "Description (Normalized)",
-            "Specification",
-            "Unit",
-            "Quantity",
-        ]
-        
-        display_df = display_df[
-            [c for c in preferred_cols if c in display_df.columns]
-            + [c for c in display_df.columns if c not in preferred_cols]
-        ]
     
         edited_df = st.data_editor(
             display_df,
@@ -1634,10 +1610,7 @@ def page_estimation():
             edited_df["Category"] = (
                 st.session_state["est_table"]["Category"].values
             )
-        # Restore Description column for matching
-        if "Description (Normalized)" in edited_df.columns:
-            edited_df["Description"] = edited_df["Description (Normalized)"]
-        
+    
         st.session_state["est_table"] = edited_df
  
     col_match_btn, _ = st.columns([1, 3])
