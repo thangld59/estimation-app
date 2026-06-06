@@ -549,10 +549,28 @@ def build_description_raw(row):
     parts = []
 
     for col in ["Description", "Specification"]:
-        if col in row.index:
-            val = str(row.get(col, "")).strip()
-            if val and val.lower() != "nan":
-                parts.append(val)
+        if col not in row.index:
+            continue
+
+        val = row.get(col, "")
+
+        # Skip None / NaN
+        if pd.isna(val):
+            continue
+
+        val = str(val).strip()
+
+        # Skip empty-like values
+        if val.lower() in [
+            "",
+            "none",
+            "nan",
+            "null",
+            "n/a",
+        ]:
+            continue
+
+        parts.append(val)
 
     return " ".join(parts).strip()
 
@@ -599,7 +617,6 @@ def validate_and_fix(df):
         )
 
     return df
-
 
 def parse_pipeline(df):
 
