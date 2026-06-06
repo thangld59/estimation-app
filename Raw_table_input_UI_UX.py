@@ -114,13 +114,31 @@ CABLE_ALIASES = {
 # ==========================================
 
 BRAND_KEYWORDS = [
-    "cadisun",
     "cadivi",
+    "cadisun",
     "ls",
     "goldcup",
     "taya",
     "tran phu",
+    "trần phú",
+    "taihan",
+    "sino",
+    "lion",
+    "thinh phat",
+    "thịnh phát",
+    "ngoc khanh",
+    "ngọc khánh",
+    "sangjin",
+    "taisin",
 ]
+def extract_brand_from_text(text):
+    text_low = str(text).lower()
+
+    for brand in BRAND_KEYWORDS:
+        if brand.lower() in text_low:
+            return brand.title()
+
+    return ""
 # ==========================================
 # FIRE KEYWORDS
 # ==========================================
@@ -583,7 +601,27 @@ def parse_pipeline(df):
     
     # STEP 1: map
     df = map_columns(df)
-
+    # Extract brand from all possible text columns if Brand is empty
+    if "Brand" not in df.columns:
+        df["Brand"] = ""
+    
+    for idx, row in df.iterrows():
+        current_brand = str(row.get("Brand", "")).strip()
+    
+        if current_brand and current_brand.lower() != "nan":
+            continue
+    
+        search_text = " ".join([
+            str(row.get("Model", "")),
+            str(row.get("Description", "")),
+            str(row.get("Specification", "")),
+            str(row.get("Brand", "")),
+        ])
+    
+        found_brand = extract_brand_from_text(search_text)
+    
+        if found_brand:
+            df.at[idx, "Brand"] = found_brand
     # STEP 3: remove empty rows
     df = remove_empty_rows(df)
 
