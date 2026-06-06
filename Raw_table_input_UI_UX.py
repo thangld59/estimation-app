@@ -139,6 +139,19 @@ def extract_brand_from_text(text):
             return brand.title()
 
     return ""
+def remove_brand_from_text(text):
+    result = str(text)
+
+    for brand in BRAND_KEYWORDS:
+        result = re.sub(
+            r"\b" + re.escape(brand) + r"\b",
+            "",
+            result,
+            flags=re.IGNORECASE
+        )
+
+    result = re.sub(r"\s+", " ", result).strip()
+    return result
 # ==========================================
 # FIRE KEYWORDS
 # ==========================================
@@ -622,6 +635,13 @@ def parse_pipeline(df):
     
         if found_brand:
             df.at[idx, "Brand"] = found_brand
+            # Remove detected brand from text columns to avoid duplication
+            for col in ["Description", "Specification"]:
+                if col in df.columns:
+                    df.at[idx, col] = remove_brand_from_text(
+                        df.at[idx, col]
+                    )
+    
     # STEP 3: remove empty rows
     df = remove_empty_rows(df)
 
