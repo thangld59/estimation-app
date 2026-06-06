@@ -192,12 +192,15 @@ CABLE_MODEL_MAP = {
     "FR-CXV": "Cu/FR-XLPE/PVC",
     "FR-CVV": "Cu/FR-PVC/PVC",
     "FR-CV": "Cu/FR-PVC",
-
     "FSN-CV": "0.6/1kV Cu/FR-PVC",
     "FSN-CXV": "0.6/1kV Cu/XLPE/FR-PVC",
     "FSN-DSTA": "0.6/1kV Cu/XLPE/PVC/DSTA/FR-PVC",
     "FRN-CV": "0.6/1kV Cu/Mica/FR-PVC",
     "FSN-CXV": "0.6/1kV Cu/Mica/XLPE/PVC/DSTA/FR-PVC",
+    "DVV": "300/500V Cu/PVC/PVC",
+    "DVV/SB": "300/500V Cu/PVC/PVC/SB/PVC",
+    "FSN-DVV": "300/500V Cu/FR-PVC/FR-PVC",
+    "FSN-DVVSB": "300/500V Cu/FR-PVC/PVC/SB/FR-PVC",
     # --------------------------------------
     # ALUMINUM
     # --------------------------------------
