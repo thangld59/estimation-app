@@ -96,8 +96,249 @@ def voltage_score(q_v, r_v):
         return 100
     else:
         return 80
+# ==========================================
+# CABLE MODEL MAP (PHASE 1)
+# ==========================================
+CABLE_ALIASES = {
+    "sup": "VCMD",
+    "súp": "VCMD",
+    "don soft": "VCM",
+    "đơn soft": "VCM",
+    "cap ngam": "DSTA",
+    "cáp ngầm": "DSTA",
+    "chong chay": "FR",
+    "chống cháy": "FR",
+}
+# ==========================================
+# BRAND KEYWORDS
+# ==========================================
 
+BRAND_KEYWORDS = [
+    "cadisun",
+    "cadivi",
+    "ls",
+    "goldcup",
+    "taya",
+    "tran phu",
+]
+# ==========================================
+# FIRE KEYWORDS
+# ==========================================
 
+FIRE_KEYWORDS = [
+    "FRLS",
+    "LSZH",
+    "LSHF",
+    "FR",
+    "LS",
+]
+CABLE_MODEL_MAP = {
+
+    # --------------------------------------
+    # POWER CABLE
+    # --------------------------------------
+    "CV": "0.6/1kV Cu/PVC",
+    "CXV": "0.6/1kV/Cu/XLPE/PVC",
+    "CVV": "0.6/1kV/Cu/PVC/PVC",   
+    "DSTA": "0.6/1kV/Cu/PVC/XLPE/DSTA/PVC",
+    "DATA": "0.6/1kV/Cu/PVC/XLPE/DATA/PVC",
+    "DATA-W": "0.6/1kV/Cu/XLPE/PVC/DATA/PVC",
+    
+    # --------------------------------------
+    # CIVIL / LIGHT
+    # --------------------------------------
+    "VCMD": "0.6/1kV Cu/PVC xúp",
+    "VCSF": "450/750V/Cu/PVC mềm",
+    "VC": "Cu/PVC",
+    "VCSH": "450/750V Cu/PVC cứng",
+    "VCTFK": "300/500V Cu/PVC/PVC Ovan",
+    "VCTF": "300/500V Cu/PVC/PVC",
+    "VCTF": "300/500V Cu/PVC/PVC",
+    
+    # --------------------------------------
+    # FIRE RESISTANT
+    # --------------------------------------
+    "FR-CXV": "Cu/FR-XLPE/PVC",
+    "FR-CVV": "Cu/FR-PVC/PVC",
+    "FR-CV": "Cu/FR-PVC",
+
+    "FSN-CV": "0.6/1kV Cu/FR-PVC",
+    "FSN-CXV": "0.6/1kV Cu/XLPE/FR-PVC",
+    "FSN-DSTA": "0.6/1kV Cu/XLPE/PVC/DSTA/FR-PVC",
+    "FRN-CV": "0.6/1kV Cu/Mica/FR-PVC",
+    "FSN-CXV": "0.6/1kV Cu/Mica/XLPE/PVC/DSTA/FR-PVC",
+    # --------------------------------------
+    # ALUMINUM
+    # --------------------------------------
+    "AXV/DSTA": "Al/XLPE/PVC/DSTA/PVC",
+
+    "AXV": "Al/XLPE/PVC",
+    "AVV": "Al/PVC/PVC",
+    "AV": "Al/PVC",
+}
+# ==========================================
+# CLASSIFY CABLE TOKENS
+# ==========================================
+
+def classify_cable_tokens(text):
+
+    import re
+
+    raw = str(text)
+
+    text_low = raw.lower()
+
+    result = {
+        "brand": "",
+        "model": "",
+        "fire_rating": "",
+        "structure": "",
+    }
+
+    # --------------------------------------
+    # BRAND
+    # --------------------------------------
+    for b in BRAND_KEYWORDS:
+
+        if b.lower() in text_low:
+
+            result["brand"] = b.title()
+
+            break
+
+    # --------------------------------------
+    # MODEL
+    # --------------------------------------
+    for model in CABLE_MODEL_MAP.keys():
+
+        pattern = r"\b" + re.escape(model.lower()) + r"\b"
+
+        if re.search(pattern, text_low):
+
+            result["model"] = model.upper()
+
+            break
+
+    # --------------------------------------
+    # FIRE RATING
+    # --------------------------------------
+    for fr in FIRE_KEYWORDS:
+
+        pattern = r"\b" + re.escape(fr.lower()) + r"\b"
+
+        if re.search(pattern, text_low):
+
+            result["fire_rating"] = fr.upper()
+
+            break
+
+    # --------------------------------------
+    # STRUCTURE
+    # --------------------------------------
+    structure_match = re.search(
+        r"(\d+)\s*[cx×x]\s*(\d+(\.\d+)?)",
+        text_low
+    )
+
+    if structure_match:
+
+        cores = structure_match.group(1)
+
+        size = structure_match.group(2)
+
+        result["structure"] = f"{cores}Cx{size}mm2"
+
+    return result
+# ==========================================
+# BUILD CANONICAL DESCRIPTION
+# ==========================================
+
+def build_canonical_description(parsed):
+
+    parts = []
+
+    # --------------------------------------
+    # BRAND
+    # --------------------------------------
+    brand = parsed.get("brand", "")
+
+    if brand:
+
+        parts.append(brand.upper())
+
+    # --------------------------------------
+    # MODEL MATERIAL
+    # --------------------------------------
+    model = parsed.get("model", "")
+
+    material = ""
+
+    if model in CABLE_MODEL_MAP:
+
+        material = CABLE_MODEL_MAP[model]
+
+    # --------------------------------------
+    # FIRE RATING
+    # --------------------------------------
+    fire_rating = parsed.get("fire_rating", "")
+
+    if fire_rating and fire_rating not in material:
+
+        if "XLPE" in material:
+
+            material = material.replace(
+                "XLPE",
+                f"{fire_rating}/XLPE"
+            )
+
+        else:
+
+            material += f"/{fire_rating}"
+
+    if material:
+
+        parts.append(material)
+
+    # --------------------------------------
+    # STRUCTURE
+    # --------------------------------------
+    structure = parsed.get("structure", "")
+
+    if structure:
+
+        parts.append(structure)
+
+    return " ".join(parts).strip()
+# ==========================================
+# EXPAND CABLE MODEL
+# ==========================================
+
+def expand_cable_model(text):
+
+    text = str(text)
+
+    # IMPORTANT:
+    # sort by longest first
+    keys = sorted(
+        CABLE_MODEL_MAP.keys(),
+        key=len,
+        reverse=True
+    )
+
+    for key in keys:
+
+        pattern = r"\b" + re.escape(key) + r"\b"
+
+        if re.search(pattern, text, flags=re.IGNORECASE):
+
+            text = re.sub(
+                pattern,
+                CABLE_MODEL_MAP[key],
+                text,
+                flags=re.IGNORECASE
+            )
+
+    return text
 # ------------------------------
 # Clean
 # ------------------------------
@@ -117,9 +358,188 @@ def clean(text: str) -> str:
     text = text.replace("-", " ")
     text = text.replace("cáp", "").replace("cable", "").replace("dây", "")
     text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"(\d),(\d)", r"\1.\2", text)
+    text = re.sub(r"(\d+)\s*mm\b", r"\1mm2", text)
+    text = re.sub(r"(\d)\s*x\s*(\d)", r"\1x\2", text)
+    text = re.sub(
+        r"(\d+)\s*lõi",
+        r"\1C",
+        text,
+        flags=re.IGNORECASE
+    )
+    # fix missing space
+    text = re.sub(
+        r"([a-zA-Z]+)(\d+x\d+)",
+        r"\1 \2",
+        text
+    )
+    
+    # cable aliases
+    for wrong, correct in CABLE_ALIASES.items():
+    
+        text = re.sub(
+            rf"\b{re.escape(wrong)}\b",
+            correct,
+            text,
+            flags=re.IGNORECASE
+        )
     return text
 
+# ------------------------------
+# PARSE PIPELINE (NEW)
+# ------------------------------
 
+def is_index_column(series):
+    try:
+        nums = pd.to_numeric(series, errors="coerce")
+        if nums.isna().any():
+            return False
+
+        diffs = nums.diff().dropna()
+        return (diffs == 1).all()
+    except:
+        return False
+
+
+def remove_index_column(df):
+    for col in df.columns:
+        if is_index_column(df[col]):
+            df = df.drop(columns=[col])
+            break
+    return df
+
+def remove_empty_rows(df):
+    return df[~df.apply(lambda r: all(str(v).strip() == "" for v in r), axis=1)]
+
+def remove_group_header(df):
+
+    def is_group_header(row):
+
+        values = [
+            str(v).strip()
+            for v in row.values
+        ]
+
+        non_empty = [
+            v
+            for v in values
+            if v != ""
+        ]
+
+        # CASE:
+        # A
+        # B
+        # C
+        if len(non_empty) == 1:
+
+            token = non_empty[0]
+
+            if token.isalpha() and len(token) <= 3:
+                return True
+
+        return False
+
+    return df[
+        ~df.apply(is_group_header, axis=1)
+    ]
+
+def normalize_description(text):
+    text = str(text).lower()
+
+    text = re.sub(r"sqmm|sqm|mm²", "mm2", text)
+    text = re.sub(r"(\d+)\s*[cC]\s*[x×]\s*(\d+)", r"\1x\2", text)
+    text = re.sub(r"(\d+)\s*mm2", r"\1mm2", text)
+
+    return text
+
+def validate_and_fix(df):
+
+    # ---------------------------------
+    # FIX DESCRIPTION IF EMPTY
+    # ---------------------------------
+    if df["Description"].astype(str).str.strip().eq("").all():
+
+        best_col = None
+        best_score = -1
+
+        for col in df.columns:
+
+            score = (
+                df[col]
+                .astype(str)
+                .str.contains(
+                    r"mm2|cu|xlpe|pvc|cv|cxv|cáp|cable",
+                    case=False,
+                    regex=True
+                )
+                .sum()
+            )
+
+            if score > best_score:
+
+                best_score = score
+                best_col = col
+
+        if best_col is not None:
+
+            df["Description"] = df[best_col]
+
+    # ---------------------------------
+    # FIX QUANTITY
+    # ---------------------------------
+    if "Quantity" in df.columns:
+
+        df["Quantity"] = pd.to_numeric(
+            df["Quantity"],
+            errors="coerce"
+        )
+
+    return df
+
+
+def parse_pipeline(df):
+
+    # STEP 0: remove index column (STT / 1,2,3)
+    df = remove_index_column(df)
+    
+    # STEP 0.5: remove rows kiểu A, B (header group)
+    df = df[df.apply(lambda r: not (
+        str(r.iloc[0]).strip().isalpha() and
+        all(str(v).strip() == "" for v in r.iloc[1:])
+    ), axis=1)]
+    
+    # STEP 1: map
+    df = map_columns(df)
+
+    # STEP 3: remove empty rows
+    df = remove_empty_rows(df)
+
+    # STEP 4: remove group header
+    df = remove_group_header(df)
+
+    # STEP 5: keep raw description for checking
+    df["Description (Raw)"] = df["Description"].astype(str)
+    
+    # STEP 5A: expand cable model
+    df["Description (Normalized)"] = df["Description"].apply(
+        expand_cable_model
+    )
+    
+    # STEP 5B: normalize description
+    df["Description (Normalized)"] = df["Description (Normalized)"].apply(
+        normalize_description
+    )
+    
+    # Keep old Description column for matching compatibility
+    df["Description"] = df["Description (Normalized)"]
+
+    # STEP 6: validate + fix
+    df = validate_and_fix(df)
+
+    # STEP 7: reset index
+    df = df.reset_index(drop=True)
+    
+    return df
 # ------------------------------
 # Cable parsing
 # ------------------------------
@@ -229,13 +649,97 @@ def material_structure_score(query_tokens, target_tokens):
 # PASTE EXCEL PARSE
 # ------------------------------
 def parse_paste_to_df(paste_text):
-    try:
-        import io
-        df = pd.read_csv(io.StringIO(paste_text), sep="\t")
-        return df
-    except:
-        return None
 
+    try:
+
+        import io
+
+        # remove empty lines
+        paste_text = "\n".join(
+            [
+                line
+                for line in paste_text.splitlines()
+                if line.strip()
+            ]
+        )
+
+        if not paste_text.strip():
+            return None
+
+        # ALWAYS READ NO HEADER
+        try:
+        
+            # FIRST TRY TAB
+            df = pd.read_csv(
+                io.StringIO(paste_text),
+                sep="\t",
+                header=None
+            )
+        
+            # if only 1 column -> try spaces
+            if df.shape[1] == 1:
+        
+                df = pd.read_csv(
+                    io.StringIO(paste_text),
+                    sep=r"\s{2,}|\t",
+                    engine="python",
+                    header=None
+                )
+        
+        except:
+        
+            return None
+
+        # detect header
+        header_keywords = [
+            "model",
+            "description",
+            "specification",
+            "quantity",
+            "qty",
+            "unit",
+            "hãng",
+            "mô tả",
+            "số lượng",
+            "đơn vị",
+        ]
+
+        first_row = (
+            df.iloc[0]
+            .astype(str)
+            .str.lower()
+            .tolist()
+        )
+
+        has_header = any(
+            any(k in cell for k in header_keywords)
+            for cell in first_row
+        )
+
+        # CASE 1 — HAS HEADER
+        if has_header:
+
+            df.columns = df.iloc[0]
+
+            df = df[1:]
+
+            df.reset_index(drop=True, inplace=True)
+
+        # CASE 2 — NO HEADER
+        else:
+
+            df.columns = [
+                f"col_{i}"
+                for i in range(df.shape[1])
+            ]
+
+        return df
+
+    except Exception as e:
+
+        print(e)
+
+        return None
 
 def map_columns(df):
     import re
@@ -249,7 +753,18 @@ def map_columns(df):
 
     def is_cable(text):
         text = str(text).lower()
-        return bool(re.search(r"\d+x\d+|\d+mm2|cu|xlpe|pvc", text))
+
+        return bool(
+            re.search(
+                r"\d+x\d+"           # 4x6
+                r"|mm2"             # mm2
+                r"|sqmm|sqm"        # sqm
+                r"|cu|xlpe|pvc"     # vật liệu
+                r"|fr|dsta|data"    # lớp bảo vệ
+                r"|cáp|day|wire|cable",  # từ khóa
+                text
+            )
+        )
 
     col_scores = {}
 
@@ -257,53 +772,54 @@ def map_columns(df):
         values = df[col].astype(str)
 
         score = {
-            "Mô tả": 0,
-            "Số lượng": 0,
+            "Description": 0,
+            "Quantity": 0,
             "Model": 0,
-            "Hãng": 0,
-            "Đơn vị": 0,
+            "Specification": 0,
+            "Unit": 0,
         }
 
         for v in values.head(10):
             v = str(v)
             v_low = v.lower()
 
+            # Quantity
             if is_number(v):
-                score["Số lượng"] += 2
+                score["Quantity"] += 2
 
+            # Description (PRIORITY)
             if is_cable(v):
-                score["Mô tả"] += 2
+                score["Description"] += 3   # ⭐ tăng trọng số
 
-            if len(v.split()) <= 3:
+            # Unit
+            if v_low in ["m", "mét", "cuộn", "chiếc", "cái", "cây", "mtr", "pcs"]:
+                score["Unit"] += 3
+
+            # Model (short text only)
+            if (
+                len(v.split()) <= 2
+                and not is_number(v)
+                and v_low not in [
+                    "m",
+                    "mét",
+                    "cuộn",
+                    "pcs",
+                    "cái",
+                ]
+            ):
                 score["Model"] += 1
 
-            if any(b in v_low for b in ["cadisun", "cadivi", "ls", "lapp"]):
-                score["Hãng"] += 2
-
-            if v_low in ["m", "mtr", "pcs"]:
-                score["Đơn vị"] += 2
+            # Spec (brand)
+            if any(b in v_low for b in ["cadisun", "cadivi", "ls", "goldcup", "Taya","Tran Phu"]):
+                score["Specification"] += 2
 
         col_scores[col] = score
 
     assigned = {}
-    # Sau đoạn assigned = {} trong ảnh của bạn
-    for target, col_name in assigned.items():
-        if col_name:
-            df = df.rename(columns={col_name: target})
-    
-    # Ép 3 cột chính về tên tiếng Anh để khớp với logic Matching của bạn
-    standard_map = {
-        "Model": "Model",
-        "Mô tả": "Description",
-        "Hãng": "Specification",  # Specification có thể là Brand (Hãng)
-        "Đơn vị": "Unit",
-        "Số lượng": "Quantity"
-    }
-    df = df.rename(columns=standard_map)
 
-    for target in ["Mô tả", "Số lượng", "Model", "Hãng", "Đơn vị"]:
+    for target in ["Description", "Quantity", "Unit", "Specification", "Model"]:
         best_col = None
-        best_score = 0
+        best_score = -1
 
         for col, scores in col_scores.items():
             if scores[target] > best_score and col not in assigned.values():
@@ -315,11 +831,11 @@ def map_columns(df):
 
     result = pd.DataFrame()
 
-    for target in ["Model", "Mô tả", "Hãng", "Đơn vị", "Số lượng"]:
-        if target in assigned:
-            result[target] = df[assigned[target]]
-        else:
-            result[target] = ""
+    result["Model"] = df[assigned["Model"]] if "Model" in assigned else ""
+    result["Description"] = df[assigned["Description"]] if "Description" in assigned else ""
+    result["Specification"] = df[assigned["Specification"]] if "Specification" in assigned else ""
+    result["Unit"] = df[assigned["Unit"]] if "Unit" in assigned else ""
+    result["Quantity"] = df[assigned["Quantity"]] if "Quantity" in assigned else ""
 
     return result
 
@@ -960,31 +1476,11 @@ def page_estimation():
     st.markdown("### 📥 Hoặc paste trực tiếp từ Excel")
     
     paste_text = st.text_area(
-        "Paste dữ liệu (Ctrl + V)",
+        "Paste dữ liệu (Ctrl + V) - không copy cột thứ tự, và để cột trống",
         height=200,
     )
-    
-    if st.button("🔄 Chuẩn hóa dữ liệu"):
-        df_raw = parse_paste_to_df(paste_text)
-    
-        if df_raw is None:
-            st.error("Không đọc được dữ liệu")
-        else:
-            df_std = map_columns(df_raw)
-            df_std.insert(0, "TT", range(1, len(df_std) + 1))
-            st.session_state["est_table"] = df_std
-    
-    if "est_table" in st.session_state:
-        st.subheader("📊 Bảng chuẩn hóa")
-    
-        edited_df = st.data_editor(
-            st.session_state["est_table"],
-            num_rows="dynamic",
-            use_container_width=True
-        )
-    
-        edited_df["TT"] = range(1, len(edited_df) + 1)
-        st.session_state["est_table"] = edited_df
+        
+  
     match_threshold = st.session_state.get("match_threshold", 70)
     w_size = st.session_state.get("weight_size", 0.45)
     w_cores = st.session_state.get("weight_cores", 0.25)
@@ -997,17 +1493,168 @@ def page_estimation():
         "cores": w_cores / total_w,
         "material": w_material / total_w,
     }
+    # ==========================================
+    # DEFAULT RAW TABLE
+    # ==========================================
+    
+    if "raw_table" not in st.session_state:
+    
+        st.session_state["raw_table"] = pd.DataFrame(
+            {
+                "Model": [""] * 5,
+                "Description": [""] * 5,
+                "Brand": [""] * 5,
+                "Unit": [""] * 5,
+                "Qty": [""] * 5,
+            }
+        )
+    # ==========================================
+    # DEFAULT EMPTY TABLE
+    # ==========================================
+    
+    if "est_table" not in st.session_state:
+    
+        st.session_state["est_table"] = pd.DataFrame(
+            {
+                "Model": [""] * 5,
+                "Description": [""] * 5,
+                "Specification": [""] * 5,
+                "Unit": [""] * 5,
+                "Quantity": [""] * 5,
+            }
+        )
+    
+    # ==========================================
+    # RAW + NORMALIZED TABLE LAYOUT
+    # ==========================================
+    
+    col_raw, col_mid, col_norm = st.columns([5, 1, 5])
+    
+    # ==========================================
+    # RAW TABLE
+    # ==========================================
+    
+    with col_raw:
+    
+        st.subheader("📝 Dữ liệu chưa chuẩn hóa")
+    
+        st.caption("Bạn có thể copy / paste hoặc nhập trực tiếp")
+    
+        raw_df = st.data_editor(
+            st.session_state["raw_table"],
+            num_rows="dynamic",
+            use_container_width=True,
+            key="raw_editor",
+        )
+    
+        st.session_state["raw_table"] = raw_df
+    
+    # ==========================================
+    # NORMALIZE BUTTON
+    # ==========================================
+    
+    normalize_clicked = False
+    
+    with col_mid:
+    
+        st.markdown("<br><br><br>", unsafe_allow_html=True)
+    
+        normalize_clicked = st.button(
+            "Chuẩn hóa dữ liệu ➜",
+            use_container_width=True
+        )
+    if normalize_clicked:
 
+        try:
+    
+            df_raw = st.session_state["raw_table"].copy()
+    
+            # remove fully empty rows
+            df_raw = df_raw.dropna(how="all")
+    
+            # rename to parser format
+            df_raw = df_raw.rename(
+                columns={
+                    "Brand": "Specification",
+                    "Qty": "Quantity",
+                }
+            )
+    
+            df_std = parse_pipeline(df_raw)
+    
+            st.session_state["est_table"] = df_std
+    
+            st.success("Chuẩn hóa dữ liệu thành công")
+    
+        except Exception as e:
+    
+            st.error(f"Lỗi chuẩn hóa dữ liệu: {e}")
+    # ==========================================
+    # NORMALIZED TABLE
+    # ==========================================
+    
+    with col_norm:
+    
+        st.subheader("📊 Dữ liệu sau chuẩn hóa")
+    
+        st.caption("Bạn có thể chỉnh sửa trực tiếp")
+    
+        display_df = st.session_state["est_table"].copy()
+        
+        # Hide internal matching column if duplicated
+        display_df = display_df.drop(
+            columns=["Description", "Category"],
+            errors="ignore"
+        )
+        
+        preferred_cols = [
+            "Model",
+            "Description (Raw)",
+            "Description (Normalized)",
+            "Specification",
+            "Unit",
+            "Quantity",
+        ]
+        
+        display_df = display_df[
+            [c for c in preferred_cols if c in display_df.columns]
+            + [c for c in display_df.columns if c not in preferred_cols]
+        ]
+    
+        edited_df = st.data_editor(
+            display_df,
+            num_rows="dynamic",
+            use_container_width=True,
+            key="normalized_editor",
+        )
+    
+        # restore category if exists
+        if "Category" in st.session_state["est_table"].columns:
+    
+            edited_df["Category"] = (
+                st.session_state["est_table"]["Category"].values
+            )
+        # Restore Description column for matching
+        if "Description (Normalized)" in edited_df.columns:
+            edited_df["Description"] = edited_df["Description (Normalized)"]
+        
+        st.session_state["est_table"] = edited_df
+ 
     col_match_btn, _ = st.columns([1, 3])
     with col_match_btn:
         run_matching = st.button("Match now")
+    
     if run_matching:
         if estimation_file is None and "est_table" not in st.session_state:
             st.error("Please upload or paste estimation first.")
         elif not price_list_files:
             st.error("Please upload at least one price list first.")
         else:
-            # --- PHẦN 1: XỬ LÝ FILE DỰ TOÁN (EST) ---
+            # read estimation
+            # -------------------------------
+            # INPUT: FILE OR PASTE
+            # -------------------------------
+           # --- PHẦN 1: XỬ LÝ FILE DỰ TOÁN (EST) ---
             if estimation_file is not None:
                 try:
                     est = pd.read_excel(estimation_file).dropna(how="all")
@@ -1018,28 +1665,30 @@ def page_estimation():
                 est = st.session_state["est_table"].copy()
             else:
                 est = None
-    
+            
+            # Chỉ xử lý nếu est tồn tại dữ liệu
             if est is not None:
+                    # 1. Tự động tìm tên cột "Description" chính xác trong file của bạn
                 all_cols = est.columns.tolist()
-                
-                # Tự động nhận diện các cột quan trọng
-                target_col = next((c for c in all_cols if c.strip().lower() in ["mô tả", "mo ta", "description"]), None)
-                unit_col = next((c for c in all_cols if any(k in c.lower() for k in ["vị", "unit", "đvt"])), None)
-                qty_col = next((c for c in all_cols if any(k in c.lower() for k in ["lượng", "qty", "số", "sl"])), None)
-    
-                if not target_col:
-                    st.error(f"Lỗi: Không tìm thấy cột 'Mô tả'. Các cột hiện có: {', '.join(all_cols)}")
+                target_col = next((c for c in all_cols if c.strip().lower() in ["Description", "mo ta", "description"]), None)
+            
+                if target_col:
+                    # 2. Nếu tìm thấy cột, tiến hành xử lý như cũ
+                    base_est = est[target_col].fillna("")
+                    est["combined"] = base_est.apply(clean)
+                    parsed_est = base_est.apply(parse_cable_spec)
+                    est["main_key"] = parsed_est.apply(lambda d: d["main_key"])
+                    est["aux_key"] = parsed_est.apply(lambda d: d["aux_key"])
+                    est["materials"] = base_est.apply(extract_material_structure_tokens)
+                    est["voltage"] = base_est.apply(extract_voltage)
+                else:
+                    # 3. Nếu không tìm thấy, báo lỗi và dừng để không bị sập app
+                    st.error(f"Lỗi: Không tìm thấy cột 'Description'. Các cột hiện có: {', '.join(all_cols)}")
                     st.stop()
     
-                # Tiền xử lý dữ liệu
-                base_est = est[target_col].fillna("")
-                est["combined"] = base_est.apply(clean)
-                parsed_est = base_est.apply(parse_cable_spec)
-                est["main_key"] = parsed_est.apply(lambda d: d["main_key"])
-                est["aux_key"] = parsed_est.apply(lambda d: d["aux_key"])
-                est["materials"] = base_est.apply(extract_material_structure_tokens)
-                est["voltage"] = base_est.apply(extract_voltage)
-    
+                # Giả lập est_cols
+                est_cols = ["Model", "Description", "Description", "Unit", "Quantity"]
+            
                 # --- PHẦN 2: ĐỌC DANH MỤC GIÁ (DB) ---
                 if selected_file == "All files":
                     frames = []
@@ -1048,15 +1697,17 @@ def page_estimation():
                             df_pl = pd.read_excel(os.path.join(user_folder, f)).dropna(how="all")
                             df_pl["source"] = f
                             frames.append(df_pl)
-                        except Exception: continue
+                        except Exception:
+                            continue
                     db = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
                 else:
                     try:
                         db = pd.read_excel(os.path.join(user_folder, selected_file)).dropna(how="all")
                         db["source"] = selected_file
                     except Exception as e:
-                        st.error(f"Cannot read price list: {e}"); db = pd.DataFrame()
-    
+                        st.error(f"Cannot read price list: {e}")
+                        db = pd.DataFrame()
+            
                 # --- PHẦN 3: SO KHỚP (MATCHING) ---
                 if db.empty:
                     st.error("No rows found in price list file(s).")
@@ -1065,65 +1716,107 @@ def page_estimation():
                     if len(db_cols) < 6:
                         st.error("Price list requires at least 6 columns.")
                     else:
-                        base_db = (db[db_cols[0]].fillna("") + " " + db[db_cols[1]].fillna("") + " " + db[db_cols[2]].fillna(""))
+                        # Tiền xử lý DB
+                        base_db = (
+                            db[db_cols[0]].fillna("") + " " + 
+                            db[db_cols[1]].fillna("") + " " + 
+                            db[db_cols[2]].fillna("")
+                        )
                         db["combined"] = base_db.apply(clean)
                         parsed_db = base_db.apply(parse_cable_spec)
                         db["main_key"] = parsed_db.apply(lambda d: d["main_key"])
                         db["aux_key"] = parsed_db.apply(lambda d: d["aux_key"])
                         db["materials"] = base_db.apply(extract_material_structure_tokens)
                         db["voltage"] = base_db.apply(extract_voltage)
-    
+            
                         results = []
                         for _, row in est.iterrows():
                             query = row["combined"]
                             q_main = row["main_key"]
                             q_aux = row["aux_key"]
                             q_mats = row["materials"]
-                            q_voltage = row["voltage"]
-                            
-                            # Lấy giá trị Unit và Qty an toàn
-                            unit = row[unit_col] if unit_col else ""
-                            qty_value = row[qty_col] if qty_col else 0
+                            q_voltage = row["voltage"] # Lấy từ row hiện tại
+                            unit = row[est_cols[3]]
+                            qty_value = row[est_cols[4]]
                             
                             best = None
+                            best_score = -1.0
+            
                             def score_row(r):
                                 try:
+                                    r_main = r.get("main_key", "")
+                                    r_aux = r.get("aux_key", "")
+                                    r_mats = r.get("materials", [])
                                     r_voltage = r.get("voltage", None)
-                                    if q_voltage and r_voltage and r_voltage[1] < q_voltage[1]: return 0
-                                    return combined_match_score(query, q_main, q_aux, q_mats, q_voltage, r.get("combined", ""), r.get("main_key", ""), r.get("aux_key", ""), r.get("materials", []), r_voltage, match_threshold, weights)
-                                except: return 0.0
-    
-                            # Tìm kiếm Top Match
+                                    # HARD RULE
+                                    if q_voltage and r_voltage:
+                                        if r_voltage[1] < q_voltage[1]:
+                                            return 0
+                                    return combined_match_score(
+                                        query, q_main, q_aux, q_mats, q_voltage,
+                                        r.get("combined", ""), r_main, r_aux, r_mats, r_voltage,
+                                        match_threshold, weights
+                                    )
+                                except:
+                                    return 0.0
+            
+                            # Các bước tìm kiếm (Top 1, Top 2, Top 3)
                             c0 = db[db["main_key"] == q_main] if q_main else pd.DataFrame()
                             if not c0.empty:
-                                c0 = c0.copy(); c0["score"] = c0.apply(score_row, axis=1)
+                                c0 = c0.copy()
+                                c0["score"] = c0.apply(score_row, axis=1)
                                 top = c0.sort_values("score", ascending=False).head(1).reset_index(drop=True)
-                                if not top.empty and top.loc[0, "score"] >= match_threshold: best = top.loc[0]
-    
+                                if not top.empty and top.loc[0, "score"] >= match_threshold:
+                                    best = top.loc[0]
+                                    best_score = float(best["score"])
+            
                             if best is None:
-                                c1 = db.copy(); c1["score"] = c1.apply(score_row, axis=1)
+                                c1 = db.copy()
+                                c1["score"] = c1.apply(score_row, axis=1)
                                 top2 = c1.sort_values("score", ascending=False).head(1).reset_index(drop=True)
-                                if not top2.empty and top2.loc[0, "score"] >= match_threshold: best = top2.loc[0]
-    
+                                if not top2.empty and top2.loc[0, "score"] >= match_threshold:
+                                    best = top2.loc[0]
+                                    best_score = float(best["score"])
+            
                             if best is None:
-                                c2 = db.copy(); c2["score"] = c2["combined"].apply(lambda x: fuzz.token_set_ratio(query, x))
+                                c2 = db.copy()
+                                c2["score"] = c2["combined"].apply(lambda x: fuzz.token_set_ratio(query, x))
                                 top3 = c2.sort_values("score", ascending=False).head(1).reset_index(drop=True)
-                                if not top3.empty: best = top3.loc[0]
-    
+                                if not top3.empty:
+                                    best = top3.loc[0]
+            
+                            # Lưu kết quả
                             if best is not None:
+                                matched_desc = best[db_cols[1]]
+                                matched_model = best[db_cols[0]]
+                                matched_spec = best[db_cols[2]]
                                 m_cost = pd.to_numeric(best[db_cols[4]], errors="coerce") or 0
                                 l_cost = pd.to_numeric(best[db_cols[5]], errors="coerce") or 0
-                                results.append([best[db_cols[0]], row[target_col], best[db_cols[1]], best[db_cols[2]], unit, pd.to_numeric(qty_value, errors="coerce") or 0, m_cost, l_cost, (pd.to_numeric(qty_value, errors="coerce") or 0)*m_cost, (pd.to_numeric(qty_value, errors="coerce") or 0)*l_cost, (pd.to_numeric(qty_value, errors="coerce") or 0)*(m_cost+l_cost)])
                             else:
-                                results.append(["", row[target_col], "", "", unit, pd.to_numeric(qty_value, errors="coerce") or 0, 0, 0, 0, 0, 0])
-    
-                        result_df = pd.DataFrame(results, columns=["Model", "Description (requested)", "Description (proposed)", "Specification", "Unit", "Quantity", "Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"])
+                                matched_desc = matched_model = matched_spec = ""
+                                m_cost = l_cost = 0
+            
+                            qty_num = pd.to_numeric(qty_value, errors="coerce") or 0
+                            results.append([
+                                matched_model, row[est_cols[1]], matched_desc, matched_spec,
+                                unit, qty_num, m_cost, l_cost, qty_num * m_cost, qty_num * l_cost,
+                                (qty_num * m_cost) + (qty_num * l_cost)
+                            ])
+            
+                        # Kết xuất DataFrame
+                        result_df = pd.DataFrame(results, columns=[
+                            "Model", "Description (requested)", "Description (proposed)", "Specification",
+                            "Unit", "Quantity", "Material Cost", "Labour Cost", "Amount Material", "Amount Labour", "Total"
+                        ])
+                        
                         grand_total = pd.to_numeric(result_df["Total"], errors="coerce").sum()
                         result_df.loc[len(result_df.index)] = ([""] * 10 + [grand_total])
+                        
                         st.session_state["last_match_df"] = result_df
                         st.session_state["last_unmatched_df"] = result_df[result_df["Description (proposed)"] == ""]
                         st.success("Matching completed.")
-
+    
+    
     # show last matching results (persistent while editing)
     last_df = st.session_state.get("last_match_df")
     last_unmatched = st.session_state.get("last_unmatched_df")
